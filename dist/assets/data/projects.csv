@@ -1,0 +1,16 @@
+id,name,description,tags,url,members
+proj-01,Adaptive Interfaces,"Exploring how interfaces can reshape themselves based on user behaviour and context.",hci;ml,https://example.com/adaptive-interfaces,ml-alice;hci-eva;hci-frank
+proj-02,Adaptive Interfaces II,"Second phase of adaptive interfaces research, focusing on multi-modal feedback.",hci;ml,,ml-alice;hci-eva;hci-grace
+proj-03,Predictive UX,"Using ML models to anticipate user intent before they act.",ml;hci,https://example.com/predictive-ux,ml-bob;hci-eva;hci-frank;ml-carol
+proj-04,Fabrication Pipeline,"An end-to-end pipeline from parametric design to physical output with minimal manual steps.",fabrication,,fab-hugo;fab-iris;ml-bob
+proj-05,Material Intelligence,"Teaching machines to reason about material behaviour during fabrication.",fabrication;ml,https://example.com/material-intelligence,fab-hugo;ml-carol;ml-david
+proj-06,Generative Layout,"Generative algorithms for spatial layout that respond to programme and circulation.",urban;ml,,ml-alice;ml-carol;urb-jake
+proj-07,Urban Sensing,"A network of low-cost sensors that maps pedestrian flow and environmental conditions.",urban;data,https://example.com/urban-sensing,urb-jake;urb-kim;hci-frank
+proj-08,City Data Flows,"Visualising how data, people, and resources move through urban systems.",urban;data,,urb-leo;bridge-mia;hci-grace
+proj-09,Cross-Lab Exchange,"A structured programme for researchers to embed in other clusters for short residencies.",bridge,https://example.com/cross-lab,bridge-mia;ml-alice;hci-eva;fab-hugo;urb-jake
+proj-10,Infrastructure Mapping,"Mapping the hidden infrastructure of the city — pipes, cables, and maintenance cycles.",urban;data,https://example.com/infra-map,bridge-noah;urb-leo;urb-kim;fab-iris
+proj-11,Embedded Systems,"Low-power embedded platforms for sensing and actuation in architectural environments.",fabrication;ml,,bridge-noah;ml-david;fab-hugo
+proj-12,Interaction Patterns,"A shared library of interaction patterns developed and tested across HCI and ML research.",hci;ml,https://example.com/patterns,hci-eva;hci-frank;hci-grace;ml-alice
+proj-13,Spatial Computing,"Combining spatial awareness with computation for responsive built environments.",urban;ml;hci,,ml-alice;ml-bob;urb-jake;bridge-mia
+proj-14,Fabrication Tools,"Open-source tooling for digital fabrication, designed for non-expert users.",fabrication;hci,https://example.com/fab-tools,fab-iris;fab-hugo;hci-frank
+proj-15,Community Networks,"Participatory design of neighbourhood-scale communication networks.",urban;bridge,https://example.com/community-networks,urb-leo;urb-kim;bridge-mia;bridge-noah
