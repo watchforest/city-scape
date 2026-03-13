@@ -1,7 +1,7 @@
 /**
  * HTML overlay panel for project info.
- * Slides in from the right when a project is clicked.
- * Includes name, description, tags, member list, and QR code if URL present.
+ * Slides in from the right when a project/attraction is clicked.
+ * Uses CSS custom properties set by DayCycle for day/night theming.
  */
 
 import QRCode from 'qrcode';
@@ -18,50 +18,67 @@ export function initOverlay(onPersonClick) {
   _panel.innerHTML = '';
   document.body.appendChild(_panel);
 
-  // Inject styles
   const style = document.createElement('style');
   style.textContent = `
     #project-overlay {
       position: fixed;
       top: 0; right: 0;
       width: 320px; height: 100vh;
-      background: rgba(0,0,0,0.92);
-      border-left: 1px solid #1a3a4a;
-      color: #cce8ff;
-      font: 13px/1.6 monospace;
+      background: var(--ui-bg, rgba(255,248,230,0.97));
+      border-left: 1px solid var(--ui-border, #c8a850);
+      color: var(--ui-text, #2d1a00);
+      font: 13px/1.6 system-ui, sans-serif;
       padding: 24px 20px;
       box-sizing: border-box;
       transform: translateX(100%);
       transition: transform 0.3s ease;
-      overflow-y: auto;
+      overflow: hidden;
       z-index: 100;
+      display: flex;
+      flex-direction: column;
     }
     #project-overlay.open { transform: translateX(0); }
     #project-overlay h2 {
       font-size: 15px;
-      color: #fff;
+      color: var(--ui-text, #2d1a00);
       margin: 0 0 6px 0;
       line-height: 1.3;
+      font-weight: 700;
+    }
+    #project-overlay .fullname {
+      font-size: 11px;
+      color: var(--ui-muted, #8a7040);
+      margin: -4px 0 4px 0;
+      font-style: italic;
     }
     #project-overlay .tags {
       display: flex; flex-wrap: wrap; gap: 6px;
       margin: 10px 0;
     }
     #project-overlay .tag {
-      background: #0a2a3a;
-      border: 1px solid #1a4a6a;
+      background: var(--ui-tag-bg, #f0e0b0);
+      border: 1px solid var(--ui-border, #c8a850);
       border-radius: 3px;
       padding: 2px 8px;
       font-size: 11px;
-      color: #66bbdd;
+      color: var(--ui-accent, #8B6914);
     }
     #project-overlay .desc {
-      color: #99ccdd;
+      color: var(--ui-muted, #8a7040);
       margin: 12px 0;
       font-size: 12px;
+      flex: 1;
+      overflow-y: auto;
+      padding-right: 4px;
+      min-height: 0;
+    }
+    #project-overlay .bottom-section {
+      flex-shrink: 0;
+      border-top: 1px solid var(--ui-border, #c8a850);
+      padding-top: 10px;
     }
     #project-overlay .section-label {
-      color: #445566;
+      color: var(--ui-muted, #8a7040);
       font-size: 10px;
       text-transform: uppercase;
       letter-spacing: 0.1em;
@@ -69,24 +86,26 @@ export function initOverlay(onPersonClick) {
     }
     #project-overlay .member {
       display: block;
-      color: #88ddcc;
+      color: var(--ui-accent, #8B6914);
       cursor: pointer;
       padding: 3px 0;
       font-size: 12px;
     }
-    #project-overlay .member:hover { color: #fff; }
+    #project-overlay .member:hover { color: var(--ui-text, #2d1a00); }
     #project-overlay .qr-wrap {
       margin: 16px 0;
-      text-align: center;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
     }
     #project-overlay .qr-wrap canvas {
-      border: 1px solid #1a3a4a;
+      border: 1px solid var(--ui-border, #c8a850);
       padding: 6px;
-      background: #050f14;
+      background: var(--ui-tag-bg, #f0e0b0);
     }
     #project-overlay .qr-label {
       font-size: 10px;
-      color: #334455;
+      color: var(--ui-muted, #8a7040);
       margin-top: 4px;
     }
     #project-overlay .close-btn {
@@ -94,12 +113,12 @@ export function initOverlay(onPersonClick) {
       top: 14px; right: 16px;
       background: none;
       border: none;
-      color: #445566;
-      font: 18px monospace;
+      color: var(--ui-muted, #8a7040);
+      font: 18px system-ui;
       cursor: pointer;
       line-height: 1;
     }
-    #project-overlay .close-btn:hover { color: #fff; }
+    #project-overlay .close-btn:hover { color: var(--ui-text, #2d1a00); }
   `;
   document.head.appendChild(style);
 }
@@ -116,46 +135,25 @@ export async function showProjectOverlay(project, personNodes, onClose) {
     return person ? { id, name: person.name, role: person.role } : { id, name: id, role: '' };
   });
 
-  let qrHTML = '';
-  if (project.url) {
-    try {
-      const canvas = document.createElement('canvas');
-      await QRCode.toCanvas(canvas, project.url, {
-        width: 120,
-        color: { dark: '#66ccff', light: '#050f14' },
-        margin: 1,
-      });
-      const qrWrap = document.createElement('div');
-      qrWrap.className = 'qr-wrap';
-      qrWrap.appendChild(canvas);
-      const lbl = document.createElement('div');
-      lbl.className = 'qr-label';
-      lbl.textContent = project.url;
-      qrWrap.appendChild(lbl);
-      qrHTML = qrWrap.outerHTML;
-      // We'll inject the canvas after setting innerHTML, see below
-    } catch (e) {
-      console.warn('QR generation failed', e);
-    }
-  }
-
   _panel.innerHTML = `
     <button class="close-btn" id="overlay-close">✕</button>
     <h2>${project.name}</h2>
+    ${project.fullname ? `<div class="fullname">${project.fullname}</div>` : ''}
     <div class="tags">${tags.map(t => `<span class="tag">${t}</span>`).join('')}</div>
     <div class="desc">${project.description ?? ''}</div>
-    <div class="section-label">Team</div>
-    ${memberNames.map(m => `<span class="member" data-id="${m.id}">${m.name} <span style="color:#334455">— ${m.role}</span></span>`).join('')}
-    <div id="qr-target"></div>
+    <div class="bottom-section">
+      <div class="section-label">Team</div>
+      ${memberNames.map(m => `<span class="member" data-id="${m.id}">${m.name} <span style="opacity:0.6">— ${m.role}</span></span>`).join('')}
+      <div id="qr-target"></div>
+    </div>
   `;
 
-  // Generate QR into the placeholder div
   if (project.url) {
     try {
       const canvas = document.createElement('canvas');
       await QRCode.toCanvas(canvas, project.url, {
         width: 120,
-        color: { dark: '#66ccff', light: '#050f14' },
+        color: { dark: '#5c3d00', light: '#fff8e6' },
         margin: 1,
       });
       const wrap = document.createElement('div');

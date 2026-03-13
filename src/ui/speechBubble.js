@@ -1,17 +1,14 @@
 /**
  * Speech bubble UI for person interaction.
- * Uses a plain HTML element positioned via CSS — no CSS2DRenderer needed.
- * The bubble is positioned by projecting the person's 3D position to screen space each frame.
+ * Uses CSS custom properties from DayCycle for day/night theming.
  */
 
 let _bubble = null;
 let _renderer = null;
 let _cam = null;
-let _targetPerson = null; // { mesh, person }
-let _state = 'hidden'; // 'hidden' | 'intro' | 'dialogue' | 'project-select'
+let _targetPerson = null;
+let _state = 'hidden';
 let _onWalkToProject = null;
-
-const _v = { x: 0, y: 0, z: 0 }; // reusable projected pos
 
 export function initSpeechBubble(renderer, cam, onWalkToProject) {
   _renderer = renderer;
@@ -28,16 +25,17 @@ export function initSpeechBubble(renderer, cam, onWalkToProject) {
       position: fixed;
       display: none;
       max-width: 260px;
-      background: rgba(0,0,0,0.9);
-      border: 1px solid #1a4a6a;
-      border-radius: 6px;
+      background: var(--ui-bg, rgba(255,248,230,0.97));
+      border: 1px solid var(--ui-border, #c8a850);
+      border-radius: 8px;
       padding: 12px 14px;
-      color: #cce8ff;
-      font: 12px/1.6 monospace;
+      color: var(--ui-text, #2d1a00);
+      font: 12px/1.6 system-ui, sans-serif;
       pointer-events: none;
       z-index: 200;
       transform: translate(-50%, -100%);
       margin-top: -16px;
+      box-shadow: 0 4px 16px rgba(0,0,0,0.15);
     }
     #speech-bubble.active { display: block; pointer-events: auto; }
     #speech-bubble::after {
@@ -47,37 +45,48 @@ export function initSpeechBubble(renderer, cam, onWalkToProject) {
       transform: translateX(-50%);
       border: 7px solid transparent;
       border-bottom: none;
-      border-top-color: #1a4a6a;
+      border-top-color: var(--ui-border, #c8a850);
     }
     #speech-bubble .name {
-      color: #fff;
+      color: var(--ui-text, #2d1a00);
       font-weight: bold;
       margin-bottom: 4px;
     }
-    #speech-bubble .bio { color: #99ccdd; margin-bottom: 10px; }
+    #speech-bubble .bio {
+      color: var(--ui-muted, #8a7040);
+      margin-bottom: 10px;
+    }
     #speech-bubble .options { display: flex; gap: 8px; flex-wrap: wrap; }
     #speech-bubble .opt-btn {
-      background: #0a2a3a;
-      border: 1px solid #1a4a6a;
-      color: #66bbdd;
-      font: 11px monospace;
+      background: var(--ui-tag-bg, #f0e0b0);
+      border: 1px solid var(--ui-border, #c8a850);
+      color: var(--ui-accent, #8B6914);
+      font: 11px system-ui;
       padding: 4px 10px;
-      border-radius: 3px;
+      border-radius: 4px;
       cursor: pointer;
     }
-    #speech-bubble .opt-btn:hover { background: #1a3a4a; color: #fff; }
-    #speech-bubble .project-list { display: flex; flex-direction: column; gap: 4px; margin-top: 6px; }
+    #speech-bubble .opt-btn:hover {
+      background: var(--ui-accent, #8B6914);
+      color: #fff;
+    }
+    #speech-bubble .project-list {
+      display: flex; flex-direction: column; gap: 4px; margin-top: 6px;
+    }
     #speech-bubble .proj-btn {
-      background: #0a2a3a;
-      border: 1px solid #1a4a6a;
-      color: #88ddcc;
-      font: 11px monospace;
+      background: var(--ui-tag-bg, #f0e0b0);
+      border: 1px solid var(--ui-border, #c8a850);
+      color: var(--ui-accent, #8B6914);
+      font: 11px system-ui;
       padding: 5px 10px;
-      border-radius: 3px;
+      border-radius: 4px;
       cursor: pointer;
       text-align: left;
     }
-    #speech-bubble .proj-btn:hover { background: #1a3a4a; color: #fff; }
+    #speech-bubble .proj-btn:hover {
+      background: var(--ui-accent, #8B6914);
+      color: #fff;
+    }
   `;
   document.head.appendChild(style);
 }
@@ -85,7 +94,7 @@ export function initSpeechBubble(renderer, cam, onWalkToProject) {
 let _onDismiss = null;
 
 export function showPersonBubble(agentObj, projectNodes, onDismiss) {
-  _targetPerson = agentObj; // full agent object: { mesh, person, currentId, ... }
+  _targetPerson = agentObj;
   _onDismiss = onDismiss ?? null;
   _state = 'intro';
   _render(projectNodes);
@@ -103,9 +112,8 @@ export function hideBubble() {
 export function updateBubblePosition() {
   if (_state === 'hidden' || !_targetPerson?.mesh) return;
 
-  // Project 3D position to screen
   const pos = _targetPerson.mesh.position.clone();
-  pos.y += 5; // above head
+  pos.y += 5;
   pos.project(_cam);
 
   const hw = _renderer.domElement.clientWidth / 2;
@@ -153,7 +161,6 @@ function _render(projectNodes) {
       btn.addEventListener('click', () => {
         const proj = projects.find(p => p.id === btn.dataset.id);
         if (proj && _onWalkToProject) _onWalkToProject(_targetPerson, proj);
-        // Don't fire onDismiss — agent is walking, not being released
         _onDismiss = null;
         hideBubble();
       });

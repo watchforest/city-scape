@@ -27,6 +27,7 @@ export class AssetLibrary {
         this._loader.loadAsync(entry.url)
           .then(gltf => {
             entry.scene = gltf.scene;
+            entry.animations = gltf.animations ?? [];
             entry.status = 'loaded';
           })
           .catch(() => {
@@ -40,7 +41,7 @@ export class AssetLibrary {
   resolve(key) {
     const entry = this._registry.get(key);
     if (entry?.status === 'loaded' && entry.scene) {
-      return { type: 'gltf', scene: entry.scene };
+      return { type: 'gltf', scene: entry.scene, animations: entry.animations };
     }
     return { type: 'wireframe' };
   }

@@ -33,7 +33,7 @@ export class CameraController {
   }
 
   /** Smoothly zoom in and center on a world position. */
-  zoomTo(worldPos, zoomLevel = 3.5) {
+  zoomTo(worldPos, zoomLevel = 8) {
     this._savedZoom   = this._cam.zoom;
     this._savedTarget = this._controls.target.clone();
 
@@ -80,7 +80,7 @@ export class CameraController {
       current.x += (tp.x - current.x) * Math.min(1, dt * 4);
       current.z += (tp.z - current.z) * Math.min(1, dt * 4);
       this._controls.target.copy(current);
-      this._cam.zoom += (3.5 - this._cam.zoom) * Math.min(1, dt * 3);
+      this._cam.zoom += (4.5 - this._cam.zoom) * Math.min(1, dt * 3);
       this._cam.updateProjectionMatrix();
       return;
     }

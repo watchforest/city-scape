@@ -2,24 +2,24 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <title>City Scape</title>
+  <title>Park Scape</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
-    body { background: #000; overflow: hidden; }
+    body { background: #4a7c3f; overflow: hidden; }
     canvas { display: block; }
     #hud {
       position: fixed;
       bottom: 16px;
       left: 16px;
-      color: #334;
-      font: 11px/1.6 monospace;
+      color: rgba(255,255,255,0.5);
+      font: 11px/1.6 system-ui, sans-serif;
       pointer-events: none;
     }
   </style>
 </head>
 <body>
   <div id="hud">
-    scroll: zoom &nbsp;|&nbsp; drag: rotate &nbsp;|&nbsp; right-drag: pan &nbsp;|&nbsp; N: toggle network
+    scroll: zoom &nbsp;|&nbsp; drag: rotate &nbsp;|&nbsp; right-drag: pan &nbsp;|&nbsp; T: cycle time of day
   </div>
   <script type="module" src="/src/main.js"></script>
 </body>

@@ -2,22 +2,20 @@
  * Asset registry — the only file that needs editing to add new 3D models.
  *
  * Keys follow the convention:
- *   'tower:<cluster>'      — landmark tower per cluster type
- *   'building:small'       — generic small building
+ *   'attraction:<cluster>' — park attraction per cluster type
  *   'person:default'       — walking agent figure
  *
- * Drop a .glb file into public/assets/models/ and register it here.
- * If a file is missing or fails to load, the wireframe fallback is used automatically.
+ * Drop a .glb into public/assets/attractions/<cluster>/attraction.glb and
+ * uncomment the relevant line. Missing files fall through to procedural shapes.
  */
 export function registerAssets(library) {
-  // Buildings — uncomment and add paths when GLBs are ready
-  // library.register('tower:ml',       '/assets/models/buildings/tower_ml.glb');
-  // library.register('tower:hci',      '/assets/models/buildings/tower_hci.glb');
-  // library.register('tower:fab',      '/assets/models/buildings/tower_fab.glb');
-  // library.register('tower:urb',      '/assets/models/buildings/tower_urb.glb');
-  // library.register('tower:bridge',   '/assets/models/buildings/tower_bridge.glb');
-  // library.register('building:small', '/assets/models/buildings/small_generic.glb');
+  // Attractions — uncomment and add GLBs when ready
+  // library.register('attraction:ml',     '/assets/attractions/ml/attraction.glb');
+  // library.register('attraction:hci',    '/assets/attractions/hci/attraction.glb');
+  // library.register('attraction:fab',    '/assets/attractions/fab/attraction.glb');
+  // library.register('attraction:urb',    '/assets/attractions/urb/attraction.glb');
+  // library.register('attraction:bridge', '/assets/attractions/bridge/attraction.glb');
 
   // People
-  // library.register('person:default', '/assets/models/people/person_walk.glb');
+  library.register('person:default', '/assets/models/people/simple_character_with_basic_animations/scene.gltf');
 }

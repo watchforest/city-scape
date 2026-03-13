@@ -1,0 +1,11 @@
+Model Information:
+* title:	Simple Character With Basic Animations
+* source:	https://sketchfab.com/3d-models/simple-character-with-basic-animations-66f77d946a484e7ab756e3373297753b
+* author:	SeiwonPark (https://sketchfab.com/SeiwonPark)
+
+Model License:
+* license type:	CC-BY-4.0 (http://creativecommons.org/licenses/by/4.0/)
+* requirements:	Author must be credited. Commercial use is allowed.
+
+If you use this 3D model in your project be sure to copy paste this credit wherever you share it:
+This work is based on "Simple Character With Basic Animations" (https://sketchfab.com/3d-models/simple-character-with-basic-animations-66f77d946a484e7ab756e3373297753b) by SeiwonPark (https://sketchfab.com/SeiwonPark) licensed under CC-BY-4.0 (http://creativecommons.org/licenses/by/4.0/)
