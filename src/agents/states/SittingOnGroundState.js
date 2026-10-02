@@ -10,6 +10,7 @@ import { REST_MIN, REST_MAX } from '@/config.js';
 export class SittingOnGroundState extends SeekSpotState {
   stateId = 'sittingGround';
   fallbackState = 'resting';
+  transitions = true; // sit down (Stand-To-Sit, held), stand up in reverse
 
   constructor({ pathSegments } = {}) {
     super();
@@ -22,7 +23,7 @@ export class SittingOnGroundState extends SeekSpotState {
 
   releaseSpot(agent) { releaseGrassSpot(agent.uuid); }
 
-  onArrive(agent) { agent.playRole('sitGround'); }
+  onArrive(agent) { agent.sitDown(null); }
 
   duration(agent) { return REST_MIN + agent.rand() * (REST_MAX - REST_MIN); }
 }

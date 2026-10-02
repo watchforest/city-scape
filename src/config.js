@@ -51,8 +51,17 @@ export const CLOUD_COLOR       = 0xffffff;  // cloud blobs
 // Uniform scale applied to every character model (no auto-fit)
 export const AGENT_SCALE        = 1.5;
 export const AGENT_SPEED        = 4.5; // world units per second (walking pace — see AGENT_WALK_TIMESCALE)
-export const AGENT_SPRINT_SPEED = 12;  // world units per second (running to a project)
+export const AGENT_SPRINT_SPEED = 9;   // world units per second (running to a project)
 export const AGENT_TURN_RATE    = 10;  // how quickly an agent turns to face its travel direction (1/s; higher = snappier)
+
+// Walking on slopes (the hills reach ~20° where agents walk): going uphill slows an agent,
+// downhill speeds it up a little, and it leans into the slope. Speed multiplier is
+// clamp(1 − speedK × slope, min, max) with slope = rise/run along the direction of travel.
+export const AGENT_SLOPE = { speedK: 1.4, speedMin: 0.6, speedMax: 1.15, lean: 0.5, maxLean: 0.2 }; // lean in radians per radian of slope
+
+// Per-agent variation so the crowd doesn't move in lockstep.
+export const AGENT_SPEED_JITTER = 0.12;        // each agent's walk/run speed is ±12% of the base
+export const AGENT_BIAS_RANGE   = [0.5, 1.5];  // each agent's personal multiplier on every idle activity's weight
 
 // Agent behaviour timers (seconds)
 export const ARRIVAL_WAVE_DURATION = 4;   // wave at a project landmark, then walk on
@@ -75,6 +84,38 @@ export const IDLE_WEIGHTS = { bench: 0.30, ground: 0.20, rest: 0.25, dance: 0.25
 export const DANCE_MIN = 6;
 export const DANCE_MAX = 14;
 
+// Dancing is a group activity: nobody dances alone.
+//   - A new dance only starts where at least DANCE_START_CROWD other agents are within DANCE_GATHER_RADIUS.
+//   - The more agents gathered, the more attractive dancing is (weight × (1 + DANCE_CROWD_BOOST per extra agent)).
+//   - An agent finishing a stroll near people already dancing joins in with DANCE_JOIN_CHANCE.
+export const DANCE_GATHER_RADIUS = 45;   // who counts as "around" (free walkers who could join) and gets invited
+export const DANCE_START_CROWD   = 1;    // free walkers needed within the radius for a new dance to start
+export const DANCE_CROWD_BOOST   = 0.6;
+export const DANCE_JOIN_RADIUS   = 60;
+export const DANCE_ALONE_GRACE   = 25;   // seconds a dancer waits for company (invitees may be a walk away) before giving up
+export const DANCE_JOIN_CHANCE   = 0.7;
+export const DANCE_RING_RADIUS   = [3, 6];  // joiners settle this far from the group's centre
+
+// Time of day: at night agents favour sitting and resting, by day dancing. 0 = no effect.
+// Applied as weight × (1 + boost × night), night = 0 (day) … 1 (full night).
+export const NIGHT_WEIGHT_BOOST = { bench: 0.8, ground: 0.8, rest: 0.8, dance: -0.7 };
+
+// Walking together. A walker may recruit nearby walkers to go along (and talk) for the rest
+// of its stroll; at the end the group usually stops for a chat, otherwise disperses.
+export const GROUP_WALK_CHANCE    = 0.2;  // per stroll start
+export const GROUP_RECRUIT_RADIUS = 25;
+export const GROUP_MAX_SIZE       = 3;    // leader + up to 2 companions
+export const GROUP_SPACING        = 3.5;  // companions walk this far beside/behind the leader
+export const GROUP_CHAT_AFTER     = 0.6;  // chance the group stops to chat when the stroll ends
+
+// Two walkers who pass close to each other may stop and wave (Waving-both-arms), and then
+// sometimes carry on as a walking group.
+export const MEET_RADIUS        = 7;
+export const MEET_CHANCE_PER_S  = 0.25;  // while two eligible agents are within MEET_RADIUS
+export const MEET_COOLDOWN      = 40;    // seconds before an agent can meet again
+export const MEET_WAVE_DURATION = 2.8;
+export const MEET_GROUP_CHANCE  = 0.5;
+
 // Grass spots for sitting/resting off the path (src/agents/grassSpots.js)
 export const GRASS_SEARCH_RADIUS = 45;  // path samples within this of the agent are candidates
 export const GRASS_EDGE_MIN      = 2;   // extra distance beyond the path edge (world units)
@@ -92,14 +133,23 @@ export const GRASS_SPOT_SPACING  = 6;   // minimum distance between two claimed 
 // rate so a big mismatch can't make the legs look frantic.
 export const AGENT_WALK_TIMESCALE = { min: 0.3, max: 2.5 };
 
+//   groundSpeed — for clips without baked root motion (so none could be measured): the world
+//              units/s the clip covers at timeScale 1, so its playback rate can follow speed
+//   reverse  — play backwards from the end (used to stand up from a sit)
+// Stand-To-Sit ends in the same pose as Sitting-1 (same root height), so a bench sit is
+// Stand-To-Sit → Sitting-1, and standing up is Stand-To-Sit in reverse.
+export const AGENT_RUN_GROUND_SPEED = 5.5;
+
 export const AGENT_CLIPS = {
   idle:      { clips: ['idle'] },
   walk:      { clips: ['Walking', 'Walking-3'],               fallback: ['walking', 'idle'] }, // picked once per agent
-  run:       { clips: ['walking'],                            fallback: ['Walking', 'idle'] }, // sprint to a project
+  run:       { clips: ['walking'],                            fallback: ['Walking', 'idle'], groundSpeed: AGENT_RUN_GROUND_SPEED }, // sprint to a project
   greet:     { clips: ['Waving'],                             fallback: ['greeting', 'idle'] },
+  greetBoth: { clips: ['Waving-both-arms'],                   fallback: ['Waving', 'greeting', 'idle'] }, // two agents meeting
   dance:     { clips: ['Dancing-1', 'Dancing-2', 'Dancing-3'], fallback: ['idle'] },
   sitBench:  { clips: ['Sitting-1'],                          fallback: ['idle'] },
   sitGround: { clips: ['Stand-To-Sit'],                       fallback: ['Sitting-1', 'idle'], once: true },
+  standUp:   { clips: ['Stand-To-Sit'],                       fallback: ['idle'], once: true, reverse: true },
   rest:      { clips: ['Resting-1'],                          fallback: ['idle'] },
 };
 

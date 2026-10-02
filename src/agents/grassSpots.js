@@ -5,7 +5,7 @@
  * Spots are claimed so two agents don't pick the same patch; release on exit.
  */
 
-import { isOccupied } from '@/world/obstacleRegistry.js';
+import { isOccupied, isWalkClear } from '@/world/obstacleRegistry.js';
 import {
   GRASS_SEARCH_RADIUS, GRASS_EDGE_MIN, GRASS_EDGE_MAX, GRASS_SPOT_SPACING,
 } from '@/config.js';
@@ -59,6 +59,8 @@ export function claimGrassSpot(agentId, pos, pathSegments, rand) {
 
     const x = pt.u + nu * d, z = pt.v + nv * d;
     if (isOccupied(x, z, 1.5) || _tooClose(x, z)) continue;
+    // Don't pick a spot whose straight walk from here crosses a tree, bench, lamp or the lake.
+    if (!isWalkClear(pos.x, pos.z, x, z)) continue;
 
     _claims.set(agentId, { x, z });
     return { x, z, facing: Math.atan2(pt.u - x, pt.v - z) };

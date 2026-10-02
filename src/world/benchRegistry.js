@@ -6,6 +6,8 @@
  * lifecycle (which bench is occupied by whom) for SittingOnBenchState.
  */
 
+import { isWalkClear } from './obstacleRegistry.js';
+
 let _benches = [];
 
 /** Register a bench at (x, z) facing `facingAngle`, called alongside addBench(). */
@@ -17,22 +19,28 @@ export function registerBench(x, z, facingAngle) {
   });
 }
 
+// A bench is registered as an obstacle of this radius (environment.js BENCH_FOOTPRINT);
+// the walk up to it is allowed to enter that circle.
+const BENCH_APPROACH_SLACK = 3.4;
+
 /**
- * Find and claim the nearest unoccupied bench to (x, z), within maxDist.
+ * Find and claim the nearest unoccupied bench to (x, z), within maxDist, that can be
+ * reached by walking straight to it (nothing in the way). Benches are tried nearest first.
  * Returns { benchId, x, z, facingAngle } or null if none free nearby.
  */
 export function claimNearestSeat(agentId, x, z, maxDist = 60) {
-  let best = null, bestDist = maxDist;
-  for (const bench of _benches) {
-    if (bench.claimedBy !== null) continue;
-    const d = Math.hypot(bench.x - x, bench.z - z);
-    if (d > bestDist) continue;
-    best = bench;
-    bestDist = d;
+  const candidates = _benches
+    .filter(b => b.claimedBy === null)
+    .map(b => ({ b, d: Math.hypot(b.x - x, b.z - z) }))
+    .filter(c => c.d <= maxDist)
+    .sort((p, q) => p.d - q.d);
+
+  for (const { b } of candidates) {
+    if (!isWalkClear(x, z, b.x, b.z, 0.8, BENCH_APPROACH_SLACK)) continue;
+    b.claimedBy = agentId;
+    return { benchId: b.id, x: b.x, z: b.z, facingAngle: b.facingAngle };
   }
-  if (!best) return null;
-  best.claimedBy = agentId;
-  return { benchId: best.id, x: best.x, z: best.z, facingAngle: best.facingAngle };
+  return null;
 }
 
 export function releaseSeat(benchId) {

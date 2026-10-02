@@ -6,11 +6,17 @@
  * vehicle along it via FollowPathBehavior. On arrival, either starts a new
  * random stroll (idle wandering) or hands off to the arrival callback
  * (directed walk to an attraction).
+ *
+ * A stroller may also take nearby walkers along as companions (groups.js): they walk and
+ * talk together for the rest of the stroll, and at its end the group usually stops for a chat.
  */
 
 import * as YUKA from 'yuka';
 import { buildStrollWaypoints, buildRouteWaypoints } from '../waypoints.js';
 import { selectNextBehaviour } from '../idleSelection.js';
+import { formGroup, findCompanions, dissolveGroup, groupChat } from '../groups.js';
+import { isFreeWalker } from '../crowd.js';
+import { GROUP_WALK_CHANCE, GROUP_CHAT_AFTER } from '@/config.js';
 
 const ARRIVE_TOLERANCE = 1.5;
 // yuka reports a path finished as soon as the *last* waypoint becomes the target,
@@ -37,6 +43,7 @@ export class WalkingState extends YUKA.State {
     agent.playRole(sprinting ? 'run' : 'walk');
     agent.maxSpeed = sprinting ? agent._sprintSpeed : agent._baseSpeed;
     agent.steering.add(this._follow);
+    if (sprinting) dissolveGroup(agent); // an errand to a landmark: go alone
     this._startStroll(agent);
   }
 
@@ -51,13 +58,22 @@ export class WalkingState extends YUKA.State {
         return;
       }
 
-      const behaviour = selectNextBehaviour(agent, this._getAllAgents(), agent.rand ?? Math.random);
+      const rand = agent.rand ?? Math.random;
+
+      // End of a group stroll: usually stop and talk together, otherwise go separate ways.
+      if (agent.groupFollowers.length) {
+        if (rand() < GROUP_CHAT_AFTER && groupChat(agent, rand)) return;
+        dissolveGroup(agent);
+      }
+
+      const behaviour = selectNextBehaviour(agent, this._getAllAgents(), rand, agent.night);
       if (behaviour.kind === 'chatting') {
         agent._pendingChat = { duration: behaviour.duration, partner: behaviour.partner };
         agent.stateMachine.changeTo('chatting');
         return;
       }
       if (behaviour.kind !== 'walking') {
+        if (behaviour.kind === 'dancing') agent._danceJoin = behaviour.join ?? null;
         agent.stateMachine.changeTo(behaviour.kind); // sitting | sittingGround | resting | dancing
         return;
       }
@@ -67,6 +83,7 @@ export class WalkingState extends YUKA.State {
 
   exit(agent) {
     agent.steering.remove(this._follow);
+    dissolveGroup(agent); // leaving the walking state ends any group this agent was leading
   }
 
   _atGoal(agent) {
@@ -78,18 +95,25 @@ export class WalkingState extends YUKA.State {
   _startStroll(agent) {
     const pos = { u: agent.position.x, v: agent.position.z };
     const attraction = agent.walkingToAttraction;
+    const rand = agent.rand ?? Math.random;
 
     const wps = attraction
       ? buildRouteWaypoints(pos, attraction, this._navGraph, this._pathSegments)
-      : buildStrollWaypoints(pos, this._pathSegments, agent.rand ?? Math.random, this._lastNodeId);
+      : buildStrollWaypoints(pos, this._pathSegments, rand, this._lastNodeId);
 
     this._follow.path.clear();
     if (wps.length === 0) {
       // No path data reachable from here — hold position briefly then retry.
       this._follow.path.add(new YUKA.Vector3(pos.u, 0, pos.v));
       this._follow.path.add(new YUKA.Vector3(pos.u, 0, pos.v));
-      return;
+    } else {
+      for (const wp of wps) this._follow.path.add(new YUKA.Vector3(wp.u, 0, wp.v));
     }
-    for (const wp of wps) this._follow.path.add(new YUKA.Vector3(wp.u, 0, wp.v));
+
+    // Sometimes take nearby walkers along for the stroll.
+    if (!attraction && agent.groupFollowers.length === 0 && isFreeWalker(agent) && rand() < GROUP_WALK_CHANCE) {
+      const companions = findCompanions(agent, this._getAllAgents());
+      if (companions.length) formGroup(agent, companions);
+    }
   }
 }

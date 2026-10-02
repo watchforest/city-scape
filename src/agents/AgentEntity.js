@@ -14,8 +14,11 @@
  *                       'sittingGround' | 'resting' | 'dancing' | 'greeting'.
  *                       The sit/rest states only report themselves once the agent has
  *                       arrived at its spot; while walking there it reads 'walking'.
+ *                       Companions walking in a group, and agents waving at each other,
+ *                       also read 'walking' (see isTalking / groupLeader).
  *   stopped           — true while paused for a UI interaction (greeting/overlay)
  *   chattingWith      — AgentEntity | null
+ *   isTalking         — true while in a conversation: standing chat or walking together
  */
 
 import * as THREE from 'three';
@@ -23,7 +26,7 @@ import * as YUKA from 'yuka';
 import { clone as skeletonClone } from 'three/addons/utils/SkeletonUtils.js';
 import {
   AGENT_SCALE, AGENT_SPEED, AGENT_SPRINT_SPEED, AGENT_SEP_RADIUS, AGENT_TURN_RATE,
-  AGENT_CLIPS, AGENT_WALK_TIMESCALE,
+  AGENT_SPEED_JITTER, AGENT_BIAS_RANGE, AGENT_CLIPS, AGENT_WALK_TIMESCALE, AGENT_SLOPE,
 } from '@/config.js';
 import { stripRootMotion } from '@/assets/rootMotion.js';
 import { getTerrainHeight } from '@/world/terrain.js';
@@ -33,9 +36,11 @@ import { SittingOnBenchState } from './states/SittingOnBenchState.js';
 import { SittingOnGroundState } from './states/SittingOnGroundState.js';
 import { RestingOnGrassState } from './states/RestingOnGrassState.js';
 import { DancingState } from './states/DancingState.js';
+import { AccompanyState } from './states/AccompanyState.js';
+import { MeetingState } from './states/MeetingState.js';
 
 export class AgentEntity extends YUKA.Vehicle {
-  constructor(scene, person, assetLibrary, { navGraph, pathSegments, rand, onArrivedAtAttraction, getAllAgents } = {}) {
+  constructor(scene, person, assetLibrary, { navGraph, pathSegments, rand, onArrivedAtAttraction, getAllAgents, getNight } = {}) {
     super();
 
     this.person       = person;
@@ -46,9 +51,22 @@ export class AgentEntity extends YUKA.Vehicle {
     this.animTime     = 0;
     this.rand         = rand ?? Math.random;
 
-    this.maxSpeed = AGENT_SPEED;
-    this._baseSpeed   = AGENT_SPEED;
-    this._sprintSpeed = AGENT_SPRINT_SPEED;
+    // Each agent walks a little faster or slower than the base pace, and has its own
+    // tastes (a multiplier on every idle activity's weight), so the crowd doesn't look cloned.
+    const speedK = 1 + (this.rand() * 2 - 1) * AGENT_SPEED_JITTER;
+    this.maxSpeed     = AGENT_SPEED * speedK;
+    this._baseSpeed   = AGENT_SPEED * speedK;
+    this._sprintSpeed = AGENT_SPRINT_SPEED * speedK;
+    const [bLo, bHi] = AGENT_BIAS_RANGE;
+    const bias = () => bLo + this.rand() * (bHi - bLo);
+    this.idleBias = { bench: bias(), ground: bias(), rest: bias(), dance: bias() };
+
+    // Walking together (see states/AccompanyState.js, groups.js) and meeting (MeetingState.js)
+    this.groupLeader    = null;  // set on companions: who they follow
+    this.groupFollowers = [];    // set on a leader: its companions
+    this.meetCooldown   = 0;     // seconds until this agent may stop to wave at someone again
+    this._getAllAgents  = getAllAgents ?? (() => []);
+    this._getNight      = getNight ?? (() => 0);
 
     // Per-person model from people.csv, else the shared default character.
     let asset = assetLibrary.resolve(`person:${person.id}`);
@@ -57,6 +75,9 @@ export class AgentEntity extends YUKA.Vehicle {
 
     this.mesh = skeletonClone(asset.scene);
     this.mesh.scale.setScalar(AGENT_SCALE);
+    this.mesh.rotation.order = 'YXZ'; // yaw first, then pitch (leaning into slopes) in the agent's own frame
+    this._slopeMul = 1; // smoothed speed multiplier from the ground slope
+    this._pitch    = 0; // smoothed lean (radians; + = forward)
     this.mesh.castShadow = true;
     this.mesh.traverse(c => { if (c.isMesh) c.castShadow = true; });
 
@@ -70,11 +91,12 @@ export class AgentEntity extends YUKA.Vehicle {
     this.mixer = new THREE.AnimationMixer(this.mesh);
     this.clips = {};
     this.currentClip = null;
+    this.currentRole = null; // the role (idle, walk, dance, …) of the clip now playing
     for (const clip of asset.animations) {
       this.clips[clip.name] = this.mixer.clipAction(clip);
     }
     this._walkClip = null; // chosen on first use so each agent keeps one walking style
-    this._groundSpeed = 0; // world units/s the current clip covers per second at timeScale 1 (walk only)
+    this._groundSpeed = 0; // world units/s the current clip covers per second at timeScale 1 (walk/run)
     this.playRole('idle');
 
     const spawnU = person.u ?? person.x ?? 0;
@@ -84,21 +106,25 @@ export class AgentEntity extends YUKA.Vehicle {
     scene.add(this.mesh);
     this.mesh.userData.agentRef = this;
 
-    // Visual-only offset applied while seated on a bench: raises the mesh onto the
-    // seat and nudges it forward of the backrest.
+    // Visual-only offset applied while seated on a bench: raises the mesh onto the seat and
+    // nudges it forward of the backrest. It ramps in and out with the sit-down / stand-up
+    // animation (see sitDown / standUp), so there is no pop.
     this._sitOffset = null; // { up, forward } | null
+    this._sitMode   = 'none'; // 'none' | 'down' | 'seated' | 'up'
+    this._sitBlend  = 0;      // 0..1, how much of _sitOffset is applied
 
     this.setRenderComponent(this.mesh, (entity, renderComponent) => {
       let x = entity.position.x, z = entity.position.z, y = getTerrainHeight(x, z);
       const so = entity._sitOffset;
       if (so) {
         const f = entity._facing ?? 0;
-        x += Math.sin(f) * so.forward;
-        z += Math.cos(f) * so.forward;
-        y += so.up;
+        x += Math.sin(f) * so.forward * entity._sitBlend;
+        z += Math.cos(f) * so.forward * entity._sitBlend;
+        y += so.up * entity._sitBlend;
       }
       renderComponent.position.set(x, y, z);
       if (entity._facing != null) renderComponent.rotation.y = entity._facing;
+      renderComponent.rotation.x = entity._pitch;
     });
 
     // Separation keeps agents from stacking on top of each other.
@@ -109,14 +135,24 @@ export class AgentEntity extends YUKA.Vehicle {
     this.steering.add(this.separation);
 
     this.stateMachine = new YUKA.StateMachine(this);
-    this.stateMachine.add('walking', new WalkingState({ navGraph, pathSegments, onArrivedAtAttraction, getAllAgents }));
+    this.stateMachine.add('walking', new WalkingState({ navGraph, pathSegments, onArrivedAtAttraction, getAllAgents, getNight }));
     this.stateMachine.add('chatting', new ChattingState());
+    this.stateMachine.add('accompanying', new AccompanyState());
+    this.stateMachine.add('meeting', new MeetingState());
     this.stateMachine.add('sitting', new SittingOnBenchState());
     this.stateMachine.add('sittingGround', new SittingOnGroundState({ pathSegments }));
     this.stateMachine.add('resting', new RestingOnGrassState({ pathSegments }));
     this.stateMachine.add('dancing', new DancingState());
     this.stateMachine.changeTo('walking');
   }
+
+  /** True while in a conversation: a standing chat, or walking together as a group. */
+  get isTalking() {
+    return this.state === 'chatting' || this.groupLeader !== null || this.groupFollowers.length > 0;
+  }
+
+  /** 0 (day) … 1 (night): used to bias what agents do. */
+  get night() { return this._getNight(); }
 
   /** Face a world-space point (u, v) — used for greetings and chat facing. */
   facePoint(u, v) {
@@ -137,39 +173,122 @@ export class AgentEntity extends YUKA.Vehicle {
   }
 
   /**
-   * Play the animation for a role ('idle', 'walk', 'run', 'greet', 'dance',
-   * 'sitBench', 'sitGround', 'rest'). Silently does nothing if the model has no
-   * suitable clip. Looping roles don't restart if already playing.
+   * Play the animation for a role ('idle', 'walk', 'run', 'greet', 'greetBoth', 'dance',
+   * 'sitBench', 'sitGround', 'standUp', 'rest'). Silently does nothing if the model has no
+   * suitable clip. Looping roles don't restart if already playing, and start at a random
+   * point in the cycle so agents sharing a clip aren't in lockstep.
+   * @param {string} role
+   * @param {{ clip?: string }} [opts] clip — force this clip (e.g. to copy a dance partner's moves)
    */
-  playRole(role) {
-    const name = this._clipFor(role);
+  playRole(role, opts = {}) {
+    const spec = AGENT_CLIPS[role];
+    const name = (opts.clip && this.clips[opts.clip]) ? opts.clip : this._clipFor(role);
     if (!name) return;
-    const once = !!AGENT_CLIPS[role].once;
-    if (this.currentClip === name && !once) return;
+    const once = !!spec.once;
+    if (this.currentClip === name && !once) { this.currentRole = role; return; }
 
     const next = this.clips[name];
     const prev = this.clips[this.currentClip];
+    const duration = next.getClip().duration;
     next.reset();
     next.setLoop(once ? THREE.LoopOnce : THREE.LoopRepeat, Infinity);
     next.clampWhenFinished = once;
-    // Walking: update() drives the playback rate from the agent's actual speed, using
-    // the ground speed the clip originally covered (measured when root motion was
-    // stripped). Other clips play at normal speed.
-    const rootSpeed = next.getClip().userData?.rootSpeed ?? 0;
-    this._groundSpeed = role === 'walk' ? rootSpeed * AGENT_SCALE : 0;
     next.timeScale = 1;
+    if (spec.reverse) {
+      next.time = duration;
+      next.timeScale = -1;
+    } else if (!once) {
+      next.time = this.rand() * duration;
+    }
+    // Walking/running: update() drives the playback rate from the agent's actual speed.
+    // Walk clips know the ground speed they covered (measured when root motion was
+    // stripped); the run clip has none baked in, so config supplies a nominal one.
+    const rootSpeed = next.getClip().userData?.rootSpeed ?? 0;
+    this._groundSpeed = role === 'walk' ? rootSpeed * AGENT_SCALE : (spec.groundSpeed ?? 0);
     next.play();
     // No time-warp: it would overwrite the timeScale when the fade ends.
     if (prev && prev !== next) prev.crossFadeTo(next, 0.2, false);
     this.currentClip = name;
+    this.currentRole = role;
+  }
+
+  /** The clip currently playing, e.g. to have a dance partner copy it. */
+  get currentClipName() { return this.currentClip; }
+
+  /** True once a play-once clip (sit down / stand up) has reached its end. */
+  clipFinished() {
+    const action = this.clips[this.currentClip];
+    return !action || action.paused;
+  }
+
+  // ── Sitting transitions ────────────────────────────────────────────────────
+
+  /**
+   * Sit down: play Stand-To-Sit and (for a bench) lift the mesh onto the seat as the
+   * animation progresses. Pass null for sitting on the ground (no lift).
+   */
+  sitDown(offset) {
+    this._sitOffset = offset;
+    this._sitMode = 'down';
+    this._sitBlend = 0;
+    this.playRole('sitGround');
+  }
+
+  /** Switch to the seated loop (Sitting-1) once the sit-down has finished. */
+  settleSeated() {
+    this._sitMode = this._sitOffset ? 'seated' : 'none';
+    if (this._sitOffset) this.playRole('sitBench');
+  }
+
+  /** Stand up: Stand-To-Sit in reverse, lowering the mesh off the seat as it plays. */
+  standUp() {
+    this._sitMode = this._sitOffset ? 'up' : 'none';
+    this.playRole('standUp');
+  }
+
+  /** Drop any sit offset immediately (used when something interrupts a sit). */
+  clearSit() {
+    this._sitOffset = null;
+    this._sitMode = 'none';
+    this._sitBlend = 0;
+  }
+
+  _updateSitBlend(delta) {
+    if (!this._sitOffset) return;
+    const action = this.clips[this.currentClip];
+    if (this._sitMode === 'down' || this._sitMode === 'up') {
+      // Follow the animation: 0 standing … 1 seated.
+      const d = action ? action.getClip().duration : 1;
+      this._sitBlend = THREE.MathUtils.clamp((action?.time ?? 0) / d, 0, 1);
+    } else if (this._sitMode === 'seated') {
+      this._sitBlend += (1 - this._sitBlend) * Math.min(1, delta * 10);
+    }
   }
 
   update(delta) {
     this.animTime  += delta;
     this._lastDelta = delta;
+    if (this.meetCooldown > 0) this.meetCooldown -= delta;
+
+    // Ground slope along the direction of travel (rise over run; + = uphill): slows the agent
+    // going up, speeds it a little going down, and makes it lean into the slope.
+    let slope = 0;
+    const moveSpeed = this.getSpeed();
+    if (!this.stopped && moveSpeed > 0.2) {
+      const dx = this.velocity.x / moveSpeed, dz = this.velocity.z / moveSpeed;
+      slope = (getTerrainHeight(this.position.x + dx * 1.5, this.position.z + dz * 1.5)
+             - getTerrainHeight(this.position.x, this.position.z)) / 1.5;
+    }
+    const k = Math.min(1, delta * 4);
+    const S = AGENT_SLOPE;
+    this._slopeMul += (THREE.MathUtils.clamp(1 - S.speedK * slope, S.speedMin, S.speedMax) - this._slopeMul) * k;
+    this._pitch += (THREE.MathUtils.clamp(Math.atan(slope) * S.lean, -S.maxLean, S.maxLean) - this._pitch) * k;
 
     if (!this.stopped) {
+      const baseMaxSpeed = this.maxSpeed;
+      this.maxSpeed = baseMaxSpeed * this._slopeMul;
       super.update(delta);
+      this.maxSpeed = baseMaxSpeed;
       // Face travel direction while actually moving.
       const speed = this.getSpeed ? this.getSpeed() : this.velocity.length();
       if (speed > 0.1) {
@@ -185,7 +304,7 @@ export class AgentEntity extends YUKA.Vehicle {
       }
     }
 
-    // Keep the legs in step with the ground: walk-clip rate follows actual speed.
+    // Keep the legs in step with the ground: walk/run clip rate follows actual speed.
     if (this._groundSpeed > 0) {
       const action = this.clips[this.currentClip];
       if (action) {
@@ -196,6 +315,7 @@ export class AgentEntity extends YUKA.Vehicle {
 
     this.stateMachine.update();
     this.mixer.update(delta);
+    this._updateSitBlend(delta);
 
     // Render sync (mesh.position/rotation from this.position/_facing) is
     // invoked automatically by YUKA.EntityManager.updateEntity() right after

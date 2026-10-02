@@ -9,7 +9,6 @@
 
 import * as THREE from 'three';
 
-const CHAT_STATE      = 'chatting';
 const SPAWN_INTERVAL  = 3.5;   // seconds between fragments per chatting agent
 const LIFETIME        = 4.0;   // seconds a fragment lives
 const RISE_HEIGHT     = 5;     // world units risen over lifetime
@@ -117,7 +116,8 @@ export function updateChatBubbles(agents, dt) {
   if (!_scene) return;
 
   for (const agent of agents) {
-    if (agent.state !== CHAT_STATE || agent.stopped) {
+    // isTalking: a standing chat, or walking together as a group
+    if (!agent.isTalking || agent.stopped) {
       _agentTimers.delete(agent);
       continue;
     }

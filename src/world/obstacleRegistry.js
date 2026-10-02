@@ -122,3 +122,22 @@ export function isOccupied(x, z, margin = 0, excludeGrid = false) {
   }
   return false;
 }
+
+/**
+ * True if a straight walk from (ax, az) to (bx, bz) crosses no registered obstacle
+ * (trees, benches, lamps, rocks, the lake). Paths don't count: walking on a path is fine.
+ *
+ * @param {number} margin    clearance kept around obstacles (roughly the walker's radius)
+ * @param {number} stopShort ignore the last `stopShort` units, for a goal that sits inside
+ *                           its own obstacle (e.g. walking up to a bench)
+ */
+export function isWalkClear(ax, az, bx, bz, margin = 0.8, stopShort = 0) {
+  const dx = bx - ax, dz = bz - az;
+  const len = Math.hypot(dx, dz);
+  const end = Math.max(0, len - stopShort);
+  for (let d = 0; d <= end; d += 1.5) {
+    const t = len > 0 ? d / len : 0;
+    if (isOccupied(ax + dx * t, az + dz * t, margin, true)) return false;
+  }
+  return true;
+}

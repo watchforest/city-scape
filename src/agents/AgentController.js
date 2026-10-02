@@ -23,9 +23,11 @@
 
 import * as YUKA from 'yuka';
 import { AgentEntity } from './AgentEntity.js';
-import { ARRIVAL_WAVE_DURATION } from '@/config.js';
+import { isFreeWalker } from './crowd.js';
+import { ARRIVAL_WAVE_DURATION, MEET_RADIUS, MEET_CHANCE_PER_S, MEET_COOLDOWN } from '@/config.js';
 
 const GREETING_DURATION = 2.5;
+const MEET_CHECK_INTERVAL = 0.25; // seconds between looks for two walkers who have bumped into each other
 
 export class AgentController {
   constructor(scene, navGraph, personNodes, attractions, assetLibrary, pathSegments, onArrival) {
@@ -36,6 +38,8 @@ export class AgentController {
     this._entityManager = new YUKA.EntityManager();
     this._agents = [];
     this._onArrivalDone = null;
+    this._getNight  = () => 0;   // 0 (day) … 1 (night); see setNightFactor
+    this._meetTimer = 0;
 
     if (navGraph.nodes.length < 2) return;
 
@@ -52,6 +56,7 @@ export class AgentController {
         rand: () => this._rand(),
         onArrivedAtAttraction: (a, attraction) => this._onAgentArrived(a, attraction),
         getAllAgents: () => this._agents,
+        getNight: () => this._getNight(),
       });
       this._entityManager.add(agent);
       this._agents.push(agent);
@@ -62,6 +67,8 @@ export class AgentController {
   setRand(rand)          { this._rand = rand; }
   setDismissCallback(fn) { this._onDismiss = fn; }
   setArrivalDoneCallback(fn) { this._onArrivalDone = fn; }
+  /** @param {() => number} fn — time of day as 0 (day) … 1 (night); biases what agents do */
+  setNightFactor(fn) { this._getNight = fn; }
 
   getMeshes() { return this._agents.map(a => a.mesh); }
   getAgents() { return this._agents; }
@@ -70,7 +77,7 @@ export class AgentController {
     agent.stopped = true;
     agent.state   = 'greeting';
     agent.velocity.set(0, 0, 0);
-    agent._sitOffset = null; // stand up from a bench to wave
+    agent.clearSit(); // stand up from a bench to wave
     if (this._camera) agent.facePoint(this._camera.position.x, this._camera.position.z);
     agent.playRole('greet');
     agent._greetTimer = GREETING_DURATION;
@@ -106,7 +113,7 @@ export class AgentController {
     agent.stopped = true;
     agent.state   = 'greeting';
     agent.velocity.set(0, 0, 0);
-    agent.playRole('greet');
+    agent.playRole(this._rand() < 0.5 ? 'greetBoth' : 'greet'); // vary the wave
     if (this._camera) agent.facePoint(this._camera.position.x, this._camera.position.z);
     agent._greetTimer = ARRIVAL_WAVE_DURATION;
     agent._greetIsArrival = true;
@@ -135,6 +142,44 @@ export class AgentController {
       }
     }
 
+    this._checkMeetings(dt);
     this._entityManager.update(dt);
+  }
+
+  /**
+   * Two walkers who pass close to each other may stop and wave (MeetingState) — and then
+   * sometimes carry on together as a group. Checked a few times a second.
+   */
+  _checkMeetings(dt) {
+    this._meetTimer += dt;
+    if (this._meetTimer < MEET_CHECK_INTERVAL) return;
+    const step = this._meetTimer;
+    this._meetTimer = 0;
+
+    const walkers = this._agents.filter(a => a.meetCooldown <= 0 && isFreeWalker(a));
+    const r2 = MEET_RADIUS * MEET_RADIUS;
+    const chance = MEET_CHANCE_PER_S * step;
+
+    for (let i = 0; i < walkers.length; i++) {
+      const a = walkers[i];
+      if (!isFreeWalker(a)) continue; // already pulled into a meeting this pass
+      for (let j = i + 1; j < walkers.length; j++) {
+        const b = walkers[j];
+        if (!isFreeWalker(b)) continue;
+        if (a.position.squaredDistanceTo(b.position) > r2) continue;
+        if (this._rand() > chance) continue;
+        this._startMeeting(a, b);
+        break;
+      }
+    }
+  }
+
+  _startMeeting(a, b) {
+    a._meetPartner = b;  b._meetPartner = a;
+    a._meetInitiator = true;
+    a.meetCooldown = MEET_COOLDOWN * (0.8 + this._rand() * 0.4);
+    b.meetCooldown = MEET_COOLDOWN * (0.8 + this._rand() * 0.4);
+    a.stateMachine.changeTo('meeting');
+    b.stateMachine.changeTo('meeting');
   }
 }

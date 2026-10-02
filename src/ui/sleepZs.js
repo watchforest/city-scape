@@ -9,7 +9,7 @@ import * as THREE from 'three';
 const IDLE_STATES = new Set(['resting']);
 const SPAWN_INTERVAL = 1.2; // seconds between Zs per agent
 const LIFETIME = 2.0;       // seconds a Z lives
-const Z_HEIGHT_START = 6;   // world units above agent origin
+const Z_HEIGHT_START = 3.5; // world units above agent origin (only lying-down agents get Zs)
 const Z_RISE = 3;           // world units risen over lifetime
 const Z_SIZE = 1.5;         // sprite size in world units
 

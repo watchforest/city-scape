@@ -1,6 +1,13 @@
 /**
  * SeekSpotState — base for activities that happen at a particular spot: walk to
- * the spot, perform the activity for a while, then go back to walking.
+ * the spot, settle in, stay for a while, then leave and go back to walking.
+ *
+ * Phases: approach → settle → stay → leave
+ *   approach  walking to the spot
+ *   settle    arrival: onArrive() starts the pose; for sit states this is the sit-down
+ *             animation, and onSettled() runs once it has finished
+ *   stay      doing the activity until the timer runs out
+ *   leave     (sit states only) the stand-up animation, then back to walking
  *
  * Subclasses provide:
  *   stateId           — value of agent.state once the agent has arrived
@@ -9,6 +16,9 @@
  *   releaseSpot(a)    — release whatever acquireSpot claimed
  *   onArrive(a)       — start the pose/animation (agent is already stopped and facing)
  *   duration(a)       — seconds to stay at the spot
+ * and optionally:
+ *   transitions       — true to wait for sit-down / stand-up animations (default false)
+ *   onSettled(a)      — called when the settle phase ends and the stay timer starts
  *
  * While walking to the spot the agent reports state 'walking', so UI that keys on
  * state (sleep Zs, chat partner search) only reacts once it has actually settled.
@@ -20,9 +30,12 @@ import * as YUKA from 'yuka';
 const ARRIVE_TOLERANCE = 1.0;
 
 export class SeekSpotState extends YUKA.State {
+  transitions = false;
+  onSettled() {}
+
   enter(agent) {
     this._spot = this.acquireSpot(agent);
-    this._arrived = false;
+    this._phase = 'approach';
     if (!this._spot) {
       agent.stateMachine.changeTo(this.fallbackState);
       return;
@@ -37,29 +50,48 @@ export class SeekSpotState extends YUKA.State {
   execute(agent) {
     if (agent.stopped || !this._spot) return;
 
-    if (!this._arrived) {
-      const d = Math.hypot(agent.position.x - this._spot.x, agent.position.z - this._spot.z);
-      if (d < ARRIVE_TOLERANCE) {
-        this._arrived = true;
-        agent.velocity.set(0, 0, 0);
-        agent.steering.remove(this._seek);
-        agent._facing = this._spot.facing;
-        agent.state = this.stateId;
-        this.onArrive(agent);
+    switch (this._phase) {
+      case 'approach': {
+        const d = Math.hypot(agent.position.x - this._spot.x, agent.position.z - this._spot.z);
+        if (d < ARRIVE_TOLERANCE) {
+          agent.velocity.set(0, 0, 0);
+          agent.steering.remove(this._seek);
+          agent._facing = this._spot.facing;
+          agent.state = this.stateId;
+          this._phase = 'settle';
+          this.onArrive(agent);
+        }
+        break;
       }
-      return;
+      case 'settle':
+        if (!this.transitions || agent.clipFinished()) {
+          this.onSettled(agent);
+          this._phase = 'stay';
+        }
+        break;
+      case 'stay':
+        this._timer -= agent._lastDelta ?? 0;
+        if (this._timer <= 0) {
+          if (this.transitions) {
+            agent.standUp();
+            this._phase = 'leave';
+          } else {
+            agent.stateMachine.changeTo('walking');
+          }
+        }
+        break;
+      case 'leave':
+        if (agent.clipFinished()) agent.stateMachine.changeTo('walking');
+        break;
     }
-
-    this._timer -= agent._lastDelta ?? 0;
-    if (this._timer <= 0) agent.stateMachine.changeTo('walking');
   }
 
   exit(agent) {
-    agent._sitOffset = null;
+    agent.clearSit();
     if (this._seek) agent.steering.remove(this._seek);
     if (this._spot) this.releaseSpot(agent);
     this._seek = null;
     this._spot = null;
-    this._arrived = false;
+    this._phase = 'approach';
   }
 }

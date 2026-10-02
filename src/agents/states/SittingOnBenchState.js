@@ -15,6 +15,7 @@ const SIT_FORWARD = 0.2;
 export class SittingOnBenchState extends SeekSpotState {
   stateId = 'sitting';
   fallbackState = 'resting';
+  transitions = true; // sit down (Stand-To-Sit) → Sitting-1; stand up in reverse
 
   acquireSpot(agent) {
     const seat = claimNearestSeat(agent.uuid, agent.position.x, agent.position.z);
@@ -24,9 +25,11 @@ export class SittingOnBenchState extends SeekSpotState {
   releaseSpot() { releaseSeat(this._spot.benchId); }
 
   onArrive(agent) {
-    agent._sitOffset = { up: SIT_UP, forward: SIT_FORWARD };
-    agent.playRole('sitBench');
+    // The mesh is lifted onto the seat in step with the sit-down animation.
+    agent.sitDown({ up: SIT_UP, forward: SIT_FORWARD });
   }
+
+  onSettled(agent) { agent.settleSeated(); }
 
   duration(agent) { return REST_MIN + agent.rand() * (REST_MAX - REST_MIN); }
 }

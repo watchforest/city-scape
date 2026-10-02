@@ -182,6 +182,7 @@ export class DayCycle {
     } else {
       lampT = (hours - 17) / 2;
     }
+    this.night = lampT; // exposed so agents can bias what they do (0 = day … 1 = night)
     if (this._lampHeadMat) this._lampHeadMat.emissiveIntensity = lampT * 2.0;
     if (this._lampHaloMat) this._lampHaloMat.opacity           = lampT * 0.9;
 

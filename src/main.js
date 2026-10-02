@@ -133,6 +133,7 @@ async function init() {
   agentController.setDismissCallback(() => { camController.zoomOut(); activeAgent = null; });
   // The agent walks on by itself after waving; stop tracking it as the selected agent.
   agentController.setArrivalDoneCallback(agent => { if (activeAgent === agent) activeAgent = null; });
+  agentController.setNightFactor(() => dayCycle.night);
 
   /** Camera distance that frames a landmark; wider landmarks are framed from further back. */
   function landmarkFrameDistance(attraction) {
