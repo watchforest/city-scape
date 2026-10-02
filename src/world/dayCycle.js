@@ -30,6 +30,8 @@ function _lerpSky(a, b, t, out) {
   return out;
 }
 
+const UPDATE_INTERVAL_MS = 500;
+
 // Time presets for the T key toggle (hours in 24h format)
 const TIME_PRESETS = [
   { label: 'dawn',  hours: 6.5  },
@@ -45,6 +47,8 @@ export class DayCycle {
     this._scene = scene;
     this._lampHeadMat = null;
     this._lampHaloMat = null;
+    this._lastUpdateMs = -Infinity; // update() is throttled; see UPDATE_INTERVAL_MS
+    this._cssNight = null;          // last theme written to the CSS variables
 
     this._ambient = new THREE.AmbientLight(0xffffff, 0.3);
     scene.add(this._ambient);
@@ -81,9 +85,19 @@ export class DayCycle {
     this._presetIdx = (this._presetIdx + 1) % TIME_PRESETS.length;
     this._overrideHours = TIME_PRESETS[this._presetIdx].hours;
     console.log(`[DayCycle] preset: ${TIME_PRESETS[this._presetIdx].label} (${this._overrideHours}h)`);
+    this.update(true);
   }
 
-  update() {
+  /**
+   * The wall-clock time of day changes far too slowly to need per-frame work, so this
+   * recomputes at most every UPDATE_INTERVAL_MS (the light/sky shift is imperceptible
+   * over that span). Pass force = true to apply a change immediately.
+   */
+  update(force = false) {
+    const nowMs = performance.now();
+    if (!force && nowMs - this._lastUpdateMs < UPDATE_INTERVAL_MS) return;
+    this._lastUpdateMs = nowMs;
+
     const now     = new Date();
     const hours   = this._overrideHours ?? (now.getHours() + now.getMinutes() / 60 + now.getSeconds() / 3600);
     const dayFrac = hours / 24; // 0..1
@@ -148,6 +162,15 @@ export class DayCycle {
     this._moon.visible   = !sunVisible || hours < 7 || hours > 18;
     this._moon.intensity = Math.max(0, 0.15 - sunAbove * 0.12);
 
+    // ── Water: lit by whichever of sun/moon is up ─────────────────────────
+    const lightSrc = sunVisible ? this._sun : this._moon;
+    _lightDir.copy(lightSrc.position).normalize();
+    const lightI = lightSrc.intensity;
+    _lightCol.copy(lightSrc.color).multiplyScalar(Math.min(lightI, 1.2));
+    // Same irradiance the Lambert ground gets (÷π), lifted a touch so water reads brighter than turf.
+    const waterLevel = (this._ambient.intensity + lightI * Math.max(_lightDir.y, 0)) / Math.PI * 1.4;
+    setWaterLight(_lightDir, _lightCol, this._scene.background, waterLevel);
+
     // ── Lamp posts: emissive glow + ground halo, driven by time of day ────
     let lampT; // 0 = off (day), 1 = fully on (night)
     if (hours < 7 || hours >= 19) {
@@ -162,17 +185,10 @@ export class DayCycle {
     if (this._lampHeadMat) this._lampHeadMat.emissiveIntensity = lampT * 2.0;
     if (this._lampHaloMat) this._lampHaloMat.opacity           = lampT * 0.9;
 
-    // ── Water: lit by whichever of sun/moon is up ─────────────────────────
-    const lightSrc = sunVisible ? this._sun : this._moon;
-    _lightDir.copy(lightSrc.position).normalize();
-    const lightI = lightSrc.intensity;
-    _lightCol.copy(lightSrc.color).multiplyScalar(Math.min(lightI, 1.2));
-    // Same irradiance the Lambert ground gets (÷π), lifted a touch so water reads brighter than turf.
-    const waterLevel = (this._ambient.intensity + lightI * Math.max(_lightDir.y, 0)) / Math.PI * 1.4;
-    setWaterLight(_lightDir, _lightCol, this._scene.background, waterLevel);
-
-    // ── CSS variables for UI theming ──────────────────────────────────────
+    // ── CSS variables for UI theming (only touched when the theme flips) ──
     const isNight = hours < 7 || hours > 19;
+    if (isNight === this._cssNight) return;
+    this._cssNight = isNight;
     const root    = document.documentElement.style;
     if (isNight) {
       root.setProperty('--ui-bg',     'rgba(20,15,10,0.95)');

@@ -1,5 +1,5 @@
 import {
-  SEED, CAM_FRAME_PERSON, CAM_FRAME_PERSON_FROM_LIST,
+  SEED, MAX_FPS, SHADOW_UPDATE_EVERY, CAM_FRAME_PERSON, CAM_FRAME_PERSON_FROM_LIST,
   CAM_FRAME_LANDMARK_PER_RADIUS, CAM_FRAME_LANDMARK_MIN,
 } from './config.js';
 import { mulberry32 } from './utils/prng.js';
@@ -195,9 +195,17 @@ async function init() {
 
   // ── Animate ───────────────────────────────────────────────────────────────
   let lastTime = performance.now();
+  const FRAME_MS = 1000 / MAX_FPS;
+  // The shadow map is the biggest remaining per-frame cost and almost everything in it is
+  // static, so refresh it only every SHADOW_UPDATE_EVERY frames instead of every frame.
+  renderer.shadowMap.autoUpdate = false;
+  let frameNo = 0;
   function animate() {
     requestAnimationFrame(animate);
     const now = performance.now();
+    // Frame cap: on a 120 Hz display skip every other callback instead of doing twice the work.
+    // (The small slack keeps a 60 Hz display from dropping frames to timer jitter.)
+    if (now - lastTime < FRAME_MS - 2) return;
     const dt  = Math.min((now - lastTime) / 1000, 0.1);
     lastTime  = now;
 
@@ -209,15 +217,16 @@ async function init() {
     animateAttractions(attractionMeshes, dt);
     updateGrass(dt);
     updateClouds(dt);
+    updateWater(dt);
     dayCycle.update();
     updateBubblePosition();
+    if (frameNo++ % SHADOW_UPDATE_EVERY === 0) renderer.shadowMap.needsUpdate = true;
     renderer.render(scene, cam);
   }
   animate();
 
   function _selectAgent(agent) {
     activeAgent = agent;
-    updateWater(dt);
     agentController.greetAgent(agent);
     camController.zoomTo(agent.mesh.position, CAM_FRAME_PERSON_FROM_LIST);
     showPersonBubble(agent, attractions, _releaseActive);

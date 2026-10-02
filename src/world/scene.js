@@ -1,11 +1,11 @@
 import * as THREE from 'three';
-import { SKY_DAY } from '@/config.js';
+import { SKY_DAY, MAX_PIXEL_RATIO } from '@/config.js';
 
 let _renderer;
 
 export function createScene() {
   _renderer = new THREE.WebGLRenderer({ antialias: true });
-  _renderer.setPixelRatio(window.devicePixelRatio);
+  _renderer.setPixelRatio(Math.min(window.devicePixelRatio, MAX_PIXEL_RATIO));
   _renderer.setSize(window.innerWidth, window.innerHeight);
   _renderer.shadowMap.enabled = true;
   _renderer.shadowMap.type = THREE.PCFSoftShadowMap;

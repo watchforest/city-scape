@@ -2,6 +2,13 @@
 
 export const SEED = Number(new URLSearchParams(location.search).get('seed') ?? 42);
 
+// Rendering budget. Retina/ProMotion screens would otherwise render 4× the pixels at
+// up to 120 fps, which is what makes a laptop run warm. Raise these for quality,
+// lower them for a cooler/quieter machine.
+export const MAX_PIXEL_RATIO = 1.5;  // cap on devicePixelRatio (1 = crisp-less but cheapest)
+export const MAX_FPS         = 60;   // frame cap (a 120 Hz display would otherwise render 120 fps)
+export const SHADOW_UPDATE_EVERY = 2; // re-render the shadow map every Nth frame (1 = every frame); only agents move
+
 export const CAM_DIST     = 400;   // for the reference-size park; scaled with the park
 
 // Camera framing distances when a selection is focused (absolute world units, so
@@ -48,6 +55,7 @@ export const AGENT_SPRINT_SPEED = 12;  // world units per second (running to a p
 export const AGENT_TURN_RATE    = 10;  // how quickly an agent turns to face its travel direction (1/s; higher = snappier)
 
 // Agent behaviour timers (seconds)
+export const ARRIVAL_WAVE_DURATION = 4;   // wave at a project landmark, then walk on
 export const CHAT_MIN = 5;
 export const CHAT_MAX = 15;
 export const REST_MIN = 5;
@@ -55,7 +63,6 @@ export const REST_MAX = 20;
 
 // Behaviour selection probabilities, rolled when a stroll ends.
 // Walk on, chat with a nearby idle agent, or go idle (remainder).
-export const ARRIVAL_WAVE_DURATION = 4;   // wave at a project landmark, then walk on
 export const PROB_WALK = 0.65;
 export const PROB_CHAT = 0.10;
 // When going idle, relative weights of the idle activities:
@@ -99,6 +106,7 @@ export const AGENT_CLIPS = {
 // Terrain
 export const TERRAIN_MAX_HEIGHT  = 10;   // maximum hill height in world units
 export const TERRAIN_SCALE       = 4.0;   // base noise frequency: hill features across a 540-unit span (higher = more, smaller hills)
+export const TERRAIN_HILL_POWER  = 1.8;   // >1 = broad flat valleys with distinct rises; 1 = evenly rolling
 export const TERRAIN_MESA_STEPS  = 4;    // number of quantization steps (0 = smooth, 4 = mesa-like)
 export const TERRAIN_MESA_BLEND  = 0;    // 0 = fully smooth hills, 1 = fully stepped (terraced mesas)
 
@@ -106,7 +114,6 @@ export const TERRAIN_MESA_BLEND  = 0;    // 0 = fully smooth hills, 1 = fully st
 export const AGENT_ARRIVE_RADIUS  = 10;  // slow-down zone (world units)
 export const AGENT_SEP_RADIUS     = 8;   // separation distance
 export const AGENT_SEP_STRENGTH   = 20;  // separation force magnitude
-export const TERRAIN_HILL_POWER  = 1.8;   // >1 = broad flat valleys with distinct rises; 1 = evenly rolling
 export const AGENT_WANDER_AMP     = 1.5; // wander perpendicular amplitude
 export const AGENT_WANDER_FREQ    = 0.3; // wander oscillation frequency
 export const AGENT_MAX_FORCE      = 40;  // max steering force per axis
