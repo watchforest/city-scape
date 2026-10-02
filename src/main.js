@@ -6,6 +6,7 @@ import { mulberry32 } from './utils/prng.js';
 import { buildProjectEdges } from './layout/projectLayout.js';
 import { buildNavMesh } from './world/NavMesh.js';
 import { resolveModelUrl } from './assets/modelUrl.js';
+import { assetUrl } from './assets/assetUrl.js';
 import { fitParkToNodes, getParkBounds } from './world/parkBounds.js';
 import { computeFootprints } from './attractions/landmarkFit.js';
 import { buildAttractionMeshes, animateAttractions } from './attractions/AttractionPlacer.js';
@@ -38,7 +39,7 @@ async function init() {
   const { people, projects, quotes } = await loadData();
 
   // ── Layout — baked offline via `npm run bake-layout` (see scripts/bakeLayout.mjs) ──
-  const layoutRes = await fetch('/assets/data/layout.json');
+  const layoutRes = await fetch(assetUrl('assets/data/layout.json'));
   const layout = layoutRes.ok ? await layoutRes.json() : { projects: [] };
   const layoutById = new Map(layout.projects.map(p => [p.id, p]));
   const projectNodes = projects.map(proj => ({
