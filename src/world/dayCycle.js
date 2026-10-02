@@ -11,6 +11,7 @@
 
 import * as THREE from 'three';
 import { getParkHalf, getParkScale } from './parkBounds.js';
+import { setWaterLight } from './lake.js';
 import { SKY_DAY, SKY_DAWN, SKY_NIGHT } from '@/config.js';
 
 const _skyDay   = new THREE.Color(SKY_DAY);
@@ -19,6 +20,8 @@ const _skyNight = new THREE.Color(SKY_NIGHT);
 
 // Precomputed colour scratch objects
 const _skyBuf = new THREE.Color();
+const _lightDir = new THREE.Vector3();
+const _lightCol = new THREE.Color();
 
 function _lerpSky(a, b, t, out) {
   out.r = a.r + (b.r - a.r) * t;
@@ -52,7 +55,7 @@ export class DayCycle {
     this._sun.shadow.camera.near = 1;
     // Sun distance and shadow frustum follow the park size.
     this._parkScale = getParkScale();
-    const shadowHalf = getParkHalf() - 20;
+    const shadowHalf = getParkHalf() + 5; // shadows right out to the edge trees
     this._sun.shadow.camera.far  = 600 * this._parkScale;
     this._sun.shadow.camera.left   = -shadowHalf;
     this._sun.shadow.camera.right  =  shadowHalf;
@@ -158,6 +161,15 @@ export class DayCycle {
     }
     if (this._lampHeadMat) this._lampHeadMat.emissiveIntensity = lampT * 2.0;
     if (this._lampHaloMat) this._lampHaloMat.opacity           = lampT * 0.9;
+
+    // ── Water: lit by whichever of sun/moon is up ─────────────────────────
+    const lightSrc = sunVisible ? this._sun : this._moon;
+    _lightDir.copy(lightSrc.position).normalize();
+    const lightI = lightSrc.intensity;
+    _lightCol.copy(lightSrc.color).multiplyScalar(Math.min(lightI, 1.2));
+    // Same irradiance the Lambert ground gets (÷π), lifted a touch so water reads brighter than turf.
+    const waterLevel = (this._ambient.intensity + lightI * Math.max(_lightDir.y, 0)) / Math.PI * 1.4;
+    setWaterLight(_lightDir, _lightCol, this._scene.background, waterLevel);
 
     // ── CSS variables for UI theming ──────────────────────────────────────
     const isNight = hours < 7 || hours > 19;

@@ -15,6 +15,8 @@ import { buildGraph } from './data/graphBuilder.js';
 import { createScene } from './world/scene.js';
 import { createCamera } from './world/camera.js';
 import { buildGround } from './world/ground.js';
+import { setLake, buildWater, updateWater } from './world/lake.js';
+import { getTerrainHeight } from './world/terrain.js';
 import { buildEnvironment, findLakePosition } from './world/environment.js';
 import { buildClouds, updateClouds } from './world/clouds.js';
 import { buildGrass, updateGrass } from './world/grass.js';
@@ -73,7 +75,10 @@ async function init() {
   fitParkToNodes(projectNodes, footprints);
 
   // Find lake position before baking the terrain mask so the lake bed is flat
-  const lakePos = findLakePosition(projectNodes, null);
+  const routeSegments = affinityEdges.map(({ i, j }) =>
+    [projectNodes[i].layoutU, projectNodes[i].layoutV, projectNodes[j].layoutU, projectNodes[j].layoutV]);
+  const lakePos = findLakePosition(projectNodes, routeSegments);
+  setLake(lakePos);
 
   const { pathMeshes, pathSegments, renderedSegments, navGraph, attractions, plazaRadius } = buildNavMesh(projectNodes, rand, affinityEdges, lakePos, footprints);
 
@@ -94,6 +99,7 @@ async function init() {
   // ── Environment ───────────────────────────────────────────────────────────
   const { lampHeadMat, lampHaloMat } = buildEnvironment(scene, projectNodes, navGraph, rand, pathSegments, plazaRadius, lakePos);
   buildGround(scene, rand);
+  buildWater(scene, getTerrainHeight);
   buildGrass(scene, rand);
   buildClouds(scene, rand);
 
@@ -124,12 +130,6 @@ async function init() {
   agentController.setRand(rand);
   agentController.setCamera(cam);
   agentController.setDismissCallback(() => { camController.zoomOut(); activeAgent = null; });
-
-  // ── UI ────────────────────────────────────────────────────────────────────
-  initOverlay(person => {
-    const agent = agentController.getAgents().find(a => a.person.id === person.id);
-    if (!agent) return;
-    hideProjectOverlay();
   // The agent walks on by itself after waving; stop tracking it as the selected agent.
   agentController.setArrivalDoneCallback(agent => { if (activeAgent === agent) activeAgent = null; });
 
@@ -137,6 +137,12 @@ async function init() {
   function landmarkFrameDistance(attraction) {
     return Math.max(CAM_FRAME_LANDMARK_MIN, attraction.footprintRadius * CAM_FRAME_LANDMARK_PER_RADIUS);
   }
+
+  // ── UI ────────────────────────────────────────────────────────────────────
+  initOverlay(person => {
+    const agent = agentController.getAgents().find(a => a.person.id === person.id);
+    if (!agent) return;
+    hideProjectOverlay();
     _selectAgent(agent);
   });
 
@@ -211,6 +217,7 @@ async function init() {
 
   function _selectAgent(agent) {
     activeAgent = agent;
+    updateWater(dt);
     agentController.greetAgent(agent);
     camController.zoomTo(agent.mesh.position, CAM_FRAME_PERSON_FROM_LIST);
     showPersonBubble(agent, attractions, _releaseActive);

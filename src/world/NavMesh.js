@@ -22,18 +22,15 @@ import { buildRoutes }      from '../paths/PathRouter.js';
 import { renderPaths }      from '../paths/PathRenderer.js';
 import { buildNavGraph }    from '../paths/NavGraphBuilder.js';
 import { placeAttractions } from '../attractions/AttractionPlacer.js';
-import { bakePathMask }     from './terrain.js';
+import { bakePathMask, getTerrainHeight } from './terrain.js';
 
 export function buildNavMesh(projectNodes, rand, affinityEdges = null, lakePos = null, footprints = new Map()) {
-  const routes   = buildRoutes(projectNodes, rand, affinityEdges, footprints);
-  const rendered = renderPaths(routes, projectNodes);
+  const routes = buildRoutes(projectNodes, rand, affinityEdges, footprints);
 
-  // Bake the terrain path-distance mask so hills only appear in open ground.
-  // Feed all path centreline samples + project node positions + lake center.
+  // Bake the terrain flat-zone mask: ground stays level around landmarks, plazas and the
+  // lake. Paths themselves do NOT flatten the ground — they are draped over the terrain
+  // below — so hills can roll across the park between and under the routes.
   const maskPoints = [];
-  for (const seg of rendered.segments) {
-    for (const pt of seg.pts) maskPoints.push({ u: pt.u, v: pt.v });
-  }
   // Sample plaza discs densely so the full disc area is flat
   for (const proj of projectNodes) {
     const plazaR = routes.plazaRadius.get(proj.id) ?? 0;
@@ -56,7 +53,10 @@ export function buildNavMesh(projectNodes, rand, affinityEdges = null, lakePos =
   }
   bakePathMask(maskPoints);
 
-  const navGraph    = buildNavGraph(routes, rendered.segments, projectNodes);
+  // Terrain is final now: drape the path meshes over it.
+  const rendered = renderPaths(routes, projectNodes, getTerrainHeight);
+
+  const navGraph   = buildNavGraph(routes, rendered.segments, projectNodes);
   const attractions = placeAttractions(projectNodes, routes, navGraph, rendered.segments, footprints);
 
   return {

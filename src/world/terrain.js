@@ -11,8 +11,9 @@
  * Hills only appear in the gaps between paths — they never fight the ribbons.
  */
 
-import { SEED, TERRAIN_MAX_HEIGHT, TERRAIN_SCALE, TERRAIN_MESA_STEPS, TERRAIN_MESA_BLEND } from '@/config.js';
+import { SEED, TERRAIN_MAX_HEIGHT, TERRAIN_SCALE, TERRAIN_HILL_POWER, TERRAIN_MESA_STEPS, TERRAIN_MESA_BLEND } from '@/config.js';
 import { getParkBounds } from './parkBounds.js';
+import { getLakeBedOffset } from './lake.js';
 import { mulberry32 } from '@/utils/prng.js';
 
 // ── Value-noise grid ──────────────────────────────────────────────────────────
@@ -67,26 +68,20 @@ export function getGroundVariation(u, v) {
 
 // ── Path-distance mask (baked at startup) ─────────────────────────────────────
 
-// Low-res grid that stores, per cell, the distance to the nearest path point.
-// getTerrainHeight() looks up this grid and suppresses hills near paths.
+// Low-res grid that stores, per cell, the distance to the nearest flat-zone point
+// (landmarks, plazas, lake). getTerrainHeight() looks it up and keeps those areas level.
+// Paths are NOT in the mask: they are draped over the terrain instead.
 const MASK_RES  = 128;  // grid cells across the park
 const _maskDist = new Float32Array(MASK_RES * MASK_RES).fill(Infinity);
 
-// How far from a path centreline terrain is fully suppressed (world units).
+// How far from a flat-zone point terrain is fully suppressed (world units).
 // Beyond this, terrain gradually rises to full height over TERRAIN_RAMP_WIDTH.
-const TERRAIN_FLAT_RADIUS = 14;  // flat under + around paths
-const TERRAIN_RAMP_WIDTH  = 28;  // smooth hill rise beyond the flat zone
-
-function _maskCell(u, v) {
-  const b = getParkBounds();
-  const cx = Math.floor(((u - b[0]) / (b[2] - b[0])) * MASK_RES);
-  const cz = Math.floor(((v - b[1]) / (b[3] - b[1])) * MASK_RES);
-  return { cx: Math.max(0, Math.min(MASK_RES - 1, cx)), cz: Math.max(0, Math.min(MASK_RES - 1, cz)) };
-}
+const TERRAIN_FLAT_RADIUS = 8;   // level just beyond the sampled landmark/plaza/lake area
+const TERRAIN_RAMP_WIDTH  = 24;  // smooth hill rise beyond the flat zone
 
 /**
- * Call once after path routing with every relevant world point
- * (path sample centrelines + project node positions).
+ * Call once after routing, before building anything that sits on the terrain, with
+ * every point that must stay level (landmark and plaza discs, lake area).
  * Builds the distance field that shapes where hills appear.
  *
  * @param {{ u: number, v: number }[]} points
@@ -111,9 +106,16 @@ export function bakePathMask(points) {
   }
 }
 
+/** Distance to the nearest flat-zone point, bilinearly interpolated (nearest-cell would stair-step the slopes). */
 function _sampleMask(u, v) {
-  const { cx, cz } = _maskCell(u, v);
-  return _maskDist[cz * MASK_RES + cx];
+  const b = getParkBounds();
+  const fx = ((u - b[0]) / (b[2] - b[0])) * MASK_RES - 0.5;
+  const fz = ((v - b[1]) / (b[3] - b[1])) * MASK_RES - 0.5;
+  const x0 = Math.floor(fx), z0 = Math.floor(fz);
+  const tx = fx - x0, tz = fz - z0;
+  const at = (x, z) => _maskDist[Math.max(0, Math.min(MASK_RES - 1, z)) * MASK_RES + Math.max(0, Math.min(MASK_RES - 1, x))];
+  const d00 = at(x0, z0), d10 = at(x0 + 1, z0), d01 = at(x0, z0 + 1), d11 = at(x0 + 1, z0 + 1);
+  return d00 * (1 - tx) * (1 - tz) + d10 * tx * (1 - tz) + d01 * (1 - tx) * tz + d11 * tx * tz;
 }
 
 // ── Main export ───────────────────────────────────────────────────────────────
@@ -134,8 +136,10 @@ export function getTerrainHeight(u, v) {
   h += _noise(_table, nx * TERRAIN_SCALE * 4 + 6.3, ny * TERRAIN_SCALE * 4 + 4.1) * 0.20;
   h /= 1.65;
 
-  // Fold negatives into positives — guarantees hills regardless of noise sign bias
-  h = Math.abs(h) * TERRAIN_MAX_HEIGHT;
+  // Rolling hills: remap the noise to [0, 1] and raise it to a power, so valleys are
+  // broad and gentle and the rises stand out. (Folding with abs() instead would put a
+  // sharp ridge line wherever the noise crosses zero.)
+  h = Math.pow(_clamp01(h * 0.5 + 0.5), TERRAIN_HILL_POWER) * TERRAIN_MAX_HEIGHT;
 
   // ── Park edge falloff ─────────────────────────────────────────────────────
   const dx = Math.abs(u - (b[0] + b[2]) * 0.5) / (parkW * 0.5);
@@ -159,5 +163,6 @@ export function getTerrainHeight(u, v) {
     h *= _smoothstep(t);
   }
 
-  return h;
+  // Lake basin (≤ 0): the ground dips into a bowl; see lake.js
+  return h + getLakeBedOffset(u, v);
 }

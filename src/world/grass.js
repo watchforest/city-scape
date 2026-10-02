@@ -107,8 +107,8 @@ export function buildGrass(scene, rand) {
   let placed = 0;
 
   for (let attempt = 0; attempt < TUFT_COUNT * 6 && placed < TUFT_COUNT; attempt++) {
-    const x = (rand() * 2 - 1) * parkHalf * 0.96;
-    const z = (rand() * 2 - 1) * parkHalf * 0.96;
+    const x = (rand() * 2 - 1) * (parkHalf - 2);
+    const z = (rand() * 2 - 1) * (parkHalf - 2);
 
     // Skip occupied areas (paths, lake, obstacles)
     if (isOccupied(x, z, 0)) continue;

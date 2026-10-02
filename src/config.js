@@ -33,7 +33,10 @@ export const SKY_NIGHT   = 0x0a0a1a;
 
 export const GROUND_SIDE_COLOR = 0x5c3a1e;  // diorama box sides
 export const GRASS_PATCH_COLOR = 0x3d6b32;  // ground detail patches
-export const LAKE_COLOR        = 0x3a8fc1;  // semi-transparent lake
+// Lake water (src/world/lake.js): colour goes from SHALLOW at the shore to DEEP in the middle
+export const LAKE_SHALLOW_COLOR = 0x5cc4bc;
+export const LAKE_DEEP_COLOR    = 0x103f6e;
+export const LAKE_FOAM_COLOR    = 0xeaf6f3;  // shoreline foam
 export const REED_COLOR        = 0x2d5a27;  // lake reeds
 export const CLOUD_COLOR       = 0xffffff;  // cloud blobs
 
@@ -52,6 +55,7 @@ export const REST_MAX = 20;
 
 // Behaviour selection probabilities, rolled when a stroll ends.
 // Walk on, chat with a nearby idle agent, or go idle (remainder).
+export const ARRIVAL_WAVE_DURATION = 4;   // wave at a project landmark, then walk on
 export const PROB_WALK = 0.65;
 export const PROB_CHAT = 0.10;
 // When going idle, relative weights of the idle activities:
@@ -91,18 +95,18 @@ export const AGENT_CLIPS = {
   sitGround: { clips: ['Stand-To-Sit'],                       fallback: ['Sitting-1', 'idle'], once: true },
   rest:      { clips: ['Resting-1'],                          fallback: ['idle'] },
 };
-export const ARRIVAL_WAVE_DURATION = 4;   // wave at a project landmark, then walk on
 
 // Terrain
 export const TERRAIN_MAX_HEIGHT  = 10;   // maximum hill height in world units
 export const TERRAIN_SCALE       = 4.0;   // base noise frequency: hill features across a 540-unit span (higher = more, smaller hills)
 export const TERRAIN_MESA_STEPS  = 4;    // number of quantization steps (0 = smooth, 4 = mesa-like)
-export const TERRAIN_MESA_BLEND  = 0.55; // 0 = fully smooth, 1 = fully stepped
+export const TERRAIN_MESA_BLEND  = 0;    // 0 = fully smooth hills, 1 = fully stepped (terraced mesas)
 
 // Steering behaviour constants
 export const AGENT_ARRIVE_RADIUS  = 10;  // slow-down zone (world units)
 export const AGENT_SEP_RADIUS     = 8;   // separation distance
 export const AGENT_SEP_STRENGTH   = 20;  // separation force magnitude
+export const TERRAIN_HILL_POWER  = 1.8;   // >1 = broad flat valleys with distinct rises; 1 = evenly rolling
 export const AGENT_WANDER_AMP     = 1.5; // wander perpendicular amplitude
 export const AGENT_WANDER_FREQ    = 0.3; // wander oscillation frequency
 export const AGENT_MAX_FORCE      = 40;  // max steering force per axis

@@ -39,14 +39,17 @@ function _mat() {
 
 // ── Geometry helpers ──────────────────────────────────────────────────────────
 
-const PATH_LIFT = 0.04; // just enough to avoid z-fighting with the flat ground beneath
+// Paths follow the terrain: every vertex is placed at the ground height plus this lift,
+// which keeps the ribbon above the (coarser) ground mesh between its vertices.
+const PATH_LIFT = 0.12;
 
-function _discGeo(cu, cv, r) {
-  const pos = [cu, PATH_LIFT, cv];
+function _discGeo(cu, cv, r, heightAt) {
+  const pos = [cu, heightAt(cu, cv) + PATH_LIFT, cv];
   const idx = [];
   for (let i = 0; i <= PLAZA_SEGMENTS; i++) {
     const a  = (i / PLAZA_SEGMENTS) * Math.PI * 2;
-    pos.push(cu + Math.cos(a) * r, PATH_LIFT, cv + Math.sin(a) * r);
+    const x  = cu + Math.cos(a) * r, z = cv + Math.sin(a) * r;
+    pos.push(x, heightAt(x, z) + PATH_LIFT, z);
   }
   for (let i = 0; i < PLAZA_SEGMENTS; i++) idx.push(0, i+1, i+2);
   const g = new THREE.BufferGeometry();
@@ -57,14 +60,14 @@ function _discGeo(cu, cv, r) {
 }
 
 // pts: array of { u, v, tu, tv, width } — width may vary per sample
-function _ribbonGeo(pts) {
+function _ribbonGeo(pts, heightAt) {
   const pos = [], idx = [];
   for (const { u, v, tu, tv, width } of pts) {
     const hw  = (width ?? PATH_WIDTH) / 2;
     const lx  = u - tv * hw, lz = v + tu * hw;
     const rx  = u + tv * hw, rz = v - tu * hw;
-    pos.push(lx, PATH_LIFT, lz);
-    pos.push(rx, PATH_LIFT, rz);
+    pos.push(lx, heightAt(lx, lz) + PATH_LIFT, lz);
+    pos.push(rx, heightAt(rx, rz) + PATH_LIFT, rz);
   }
   for (let i = 0; i < pts.length - 1; i++) {
     const b = i * 2;
@@ -130,9 +133,10 @@ function _sampleSpline(pts, step) {
 /**
  * @param {object} routes — output of PathRouter.buildRoutes()
  * @param {ProjectNode[]} projectNodes
+ * @param {(u: number, v: number) => number} heightAt — terrain height; paths are draped over it
  * @returns {{ meshes: THREE.Mesh[], segments: PathSegment[] }}
  */
-export function renderPaths(routes, projectNodes) {
+export function renderPaths(routes, projectNodes, heightAt = () => 0) {
   const { edges, degree, plazaRadius } = routes;
   const mat = _mat();
   const meshes = [];
@@ -143,7 +147,7 @@ export function renderPaths(routes, projectNodes) {
     const r = plazaRadius.get(proj.id);
     if (!r) continue;
     meshes.push(Object.assign(
-      new THREE.Mesh(_discGeo(proj.layoutU, proj.layoutV, r), mat),
+      new THREE.Mesh(_discGeo(proj.layoutU, proj.layoutV, r, heightAt), mat),
       { receiveShadow: true }
     ));
   }
@@ -154,7 +158,7 @@ export function renderPaths(routes, projectNodes) {
     const deg = degree.get(proj.id) ?? 0;
     if (deg >= 2) {
       meshes.push(Object.assign(
-        new THREE.Mesh(_discGeo(proj.layoutU, proj.layoutV, PATH_WIDTH * 0.5), mat),
+        new THREE.Mesh(_discGeo(proj.layoutU, proj.layoutV, PATH_WIDTH * 0.5, heightAt), mat),
         { receiveShadow: true }
       ));
     }
@@ -210,7 +214,7 @@ export function renderPaths(routes, projectNodes) {
     });
 
     meshes.push(Object.assign(
-      new THREE.Mesh(_ribbonGeo(widePts), mat),
+      new THREE.Mesh(_ribbonGeo(widePts, heightAt), mat),
       { receiveShadow: true }
     ));
     rendered.push({ pts, widePts, edgeFromId: allSampled.find(s => s.pts === pts)?.edge.fromId, edgeToId: allSampled.find(s => s.pts === pts)?.edge.toId });

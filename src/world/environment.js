@@ -11,7 +11,8 @@
  */
 
 import * as THREE from 'three';
-import { LAKE_COLOR, REED_COLOR } from '@/config.js';
+import { REED_COLOR } from '@/config.js';
+import { shorePoint, getLakeFootprint } from './lake.js';
 import { getParkBounds, getParkHalf, getParkAreaScale } from './parkBounds.js';
 import { registerCircle, registerEllipse, isOccupied } from './obstacleRegistry.js';
 import { registerBench } from './benchRegistry.js';
@@ -22,6 +23,7 @@ import { TERRAIN_MAX_HEIGHT } from '@/config.js';
 const TREE_DENSITY   = 180;  // trees for the reference-size park; scaled by park area
 
 const MAX_TRIES = 80;
+const EDGE_INSET = 4; // trees keep this far in from the park edge so crowns don't overhang the frame
 
 const BENCH_SIDE_CLEAR  = 3.0;  // metres beyond path edge (added to half-width), capped
 const LAMP_SIDE_CLEAR   = 3.0;
@@ -293,7 +295,7 @@ function _sampleAlongPaths(pathSegments, spacing, side, clearance) {
 
 function _randomClear(rand, margin = 4) {
   for (let i = 0; i < MAX_TRIES; i++) {
-    const half = getParkHalf();
+    const half = getParkHalf() - EDGE_INSET;
     const x = (rand() * 2 - 1) * half;
     const z = (rand() * 2 - 1) * half;
     if (!isOccupied(x, z, margin)) return { x, z };
@@ -307,70 +309,84 @@ const LAKE_RX = 40;
 const LAKE_RZ = 26;
 
 /**
- * Find the best lake position without building any geometry.
- * Call this before bakePathMask so the lake area can be included in the mask.
+ * Find the lake position without building any geometry. Call this before
+ * bakePathMask so the lake area can be included in the mask.
+ *
+ * The lake should sit well inland: among spots that clear every project node and
+ * every route between nodes (where paths will run), prefer the one furthest from
+ * the park edge. Constraints are relaxed tier by tier on small or crowded parks.
+ *
+ * @param {ProjectNode[]} projectNodes
+ * @param {number[][]}    routeSegments — [ax, az, bx, bz] straight lines between connected nodes
+ * @returns {{ x, z, rx, rz } | null}
  */
-export function findLakePosition(projectNodes, pathGraph) {
-  const STEP       = 20;
-  const MIN_CLEAR  = 50;
-  const CENTRE_EXC = 80;
+export function findLakePosition(projectNodes, routeSegments = []) {
+  const STEP = 10;
+  // Footprint of the lake plus its banks (≈ 1.5 radii; see lake.js)
+  const EXT_X = LAKE_RX * 1.5, EXT_Z = LAKE_RZ * 1.5;
+  // [min distance to a node, min distance to a route, min slack to the park edge]
+  const TIERS = [[75, 62, 25], [60, 48, 12], [50, 0, 0]];
 
-  const obstacles = [];
-  for (const p of projectNodes) obstacles.push([p.layoutU ?? p.u ?? p.x ?? 0, p.layoutV ?? p.v ?? p.y ?? 0]);
-  for (const n of (pathGraph?.nodes ?? [])) obstacles.push([n.u ?? n.x ?? 0, n.v ?? n.y ?? 0]);
+  const nodes = projectNodes.map(p => [p.layoutU ?? 0, p.layoutV ?? 0]);
+  const half = getParkHalf();
 
-  const bounds = getParkBounds();
-  const parkHalf = getParkHalf();
-  let bestX = null, bestZ = null, bestDist = -1;
-  for (let gx = bounds[0] + STEP; gx < bounds[2] - STEP; gx += STEP) {
-    for (let gz = bounds[1] + STEP; gz < bounds[3] - STEP; gz += STEP) {
-      if (gx * gx + gz * gz < CENTRE_EXC * CENTRE_EXC) continue;
-      if (Math.abs(gx) > parkHalf - 50 || Math.abs(gz) > parkHalf - 36) continue;
-      let minDist = Infinity;
-      for (const [ox, oz] of obstacles) {
-        const d = Math.sqrt((gx - ox) ** 2 + (gz - oz) ** 2);
-        if (d < minDist) minDist = d;
-      }
-      if (minDist > bestDist) { bestDist = minDist; bestX = gx; bestZ = gz; }
+  const segDist = (px, pz, [ax, az, bx, bz]) => {
+    const dx = bx - ax, dz = bz - az;
+    const len2 = dx * dx + dz * dz || 1;
+    const t = Math.max(0, Math.min(1, ((px - ax) * dx + (pz - az) * dz) / len2));
+    return Math.hypot(px - (ax + t * dx), pz - (az + t * dz));
+  };
+
+  // Evaluate every grid spot once.
+  const spots = [];
+  for (let gx = -half; gx <= half; gx += STEP) {
+    for (let gz = -half; gz <= half; gz += STEP) {
+      const slack = Math.min(half - Math.abs(gx) - EXT_X, half - Math.abs(gz) - EXT_Z);
+      if (slack < 0) continue;
+      let nodeD = Infinity, routeD = Infinity;
+      for (const [ox, oz] of nodes) nodeD = Math.min(nodeD, Math.hypot(gx - ox, gz - oz));
+      for (const seg of routeSegments) routeD = Math.min(routeD, segDist(gx, gz, seg));
+      spots.push({ gx, gz, slack, nodeD, routeD });
     }
   }
 
-  if (bestDist < MIN_CLEAR) return null;
-  return { x: bestX, z: bestZ, rx: LAKE_RX, rz: LAKE_RZ };
+  for (const [nodeMin, routeMin, slackMin] of TIERS) {
+    let best = null, bestScore = -Infinity;
+    for (const s of spots) {
+      if (s.nodeD < nodeMin || s.routeD < routeMin || s.slack < slackMin) continue;
+      // Prefer inland (large slack to the edge); clearance from paths is a mild bonus.
+      const score = Math.min(s.slack, 90) + 0.4 * Math.min(s.nodeD, 100);
+      if (score > bestScore) { bestScore = score; best = s; }
+    }
+    if (best) return { x: best.gx, z: best.gz, rx: LAKE_RX, rz: LAKE_RZ };
+  }
+  return null;
 }
 
+/**
+ * Reeds along the waterline and the lake's obstacle footprint. The basin and the
+ * water surface themselves live in lake.js (terrain dip + water shader).
+ */
 function buildLake(scene, lakePos, rand) {
   if (!lakePos) return null;
-  const { x: bestX, z: bestZ } = lakePos;
 
-  // Lake oval
-  const lakeMesh = new THREE.Mesh(
-    new THREE.CylinderGeometry(1, 1, 0.2, 36),
-    new THREE.MeshLambertMaterial({ color: LAKE_COLOR, transparent: true, opacity: 0.75, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1 })
-  );
-  lakeMesh.scale.set(LAKE_RX, 1, LAKE_RZ);
-  lakeMesh.position.set(bestX, 0.05, bestZ);
-  lakeMesh.receiveShadow = true;
-  scene.add(lakeMesh);
-
-  // Reeds around the ellipse edge
-  const REED_COUNT = 28;
+  const REED_COUNT = 34;
   const reedMat = new THREE.MeshLambertMaterial({ color: REED_COLOR });
 
   for (let i = 0; i < REED_COUNT; i++) {
-    const angle  = (i / REED_COUNT) * Math.PI * 2 + (rand() - 0.5) * 0.3;
-    const radFac = 1.0 + rand() * 0.12;
-    const px     = bestX + Math.cos(angle) * LAKE_RX * radFac;
-    const pz     = bestZ + Math.sin(angle) * LAKE_RZ * radFac;
-    const h      = 1.5 + rand() * 2;
-    const reed   = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.15, h, 4), reedMat);
-    reed.position.set(px, h / 2, pz);
+    const angle = (i / REED_COUNT) * Math.PI * 2 + (rand() - 0.5) * 0.25;
+    const pt    = shorePoint(angle, -0.06 + rand() * 0.10); // a little outside … a little inside the waterline
+    const h     = 1.5 + rand() * 2;
+    const reed  = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.15, h, 4), reedMat);
+    reed.position.set(pt.x, getTerrainHeight(pt.x, pt.z) + h / 2 - 0.1, pt.z);
     reed.rotation.z = (rand() - 0.5) * 0.12;
     reed.castShadow = true;
     scene.add(reed);
   }
 
-  registerEllipse(bestX, bestZ, LAKE_RX, LAKE_RZ);
+  // Keep trees, grass and props off the water and its sandy banks.
+  const fp = getLakeFootprint();
+  registerEllipse(fp.x, fp.z, fp.rx, fp.rz);
   return lakePos;
 }
 
@@ -498,7 +514,7 @@ const ROCK_COLORS = [0x7a7060, 0x6a6258, 0x857a6e, 0x908880];
 function _buildRocks(scene, rand) {
   const PROBE  = 4;    // slope detection step in world units
   const COUNT  = Math.round(120 * getParkAreaScale());  // candidate positions to try
-  const HALF   = getParkHalf() - 20;
+  const HALF   = getParkHalf() - 6;
   const PLACED = [];
 
   for (let attempt = 0; attempt < COUNT * 6 && PLACED.length < COUNT; attempt++) {
