@@ -1,4 +1,6 @@
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
+import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js';
 
 /**
  * Asset library for swapping GLTF/GLB models.
@@ -14,6 +16,12 @@ export class AssetLibrary {
   constructor() {
     this._registry = new Map(); // key -> { url, status, scene }
     this._loader = new GLTFLoader();
+    // Compressed GLBs: Draco geometry (decoder files copied to public/assets/libs/draco)
+    // and meshopt geometry. KTX2/Basis textures are not enabled (needs a renderer).
+    const draco = new DRACOLoader();
+    draco.setDecoderPath('/assets/libs/draco/');
+    this._loader.setDRACOLoader(draco);
+    this._loader.setMeshoptDecoder(MeshoptDecoder);
   }
 
   register(key, url) {
