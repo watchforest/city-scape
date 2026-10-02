@@ -13,12 +13,12 @@
  *   state             — string: 'walking' | 'chatting' | 'sitting' (bench) |
  *                       'sittingGround' | 'resting' | 'dancing' | 'greeting'.
  *                       The sit/rest states only report themselves once the agent has
- *                       arrived at its spot; while walking there it reads 'walking'.
- *                       Companions walking in a group, and agents waving at each other,
- *                       also read 'walking' (see isTalking / groupLeader).
+ *                       arrived at its spot; while walking there it reads 'walking' (as it
+ *                       does on its way to a gathering). Agents waving at each other read
+ *                       'meeting'.
  *   stopped           — true while paused for a UI interaction (greeting/overlay)
- *   chattingWith      — AgentEntity | null
- *   isTalking         — true while in a conversation: standing chat or walking together
+ *   gathering         — the chat/dance gathering the agent belongs to, or null
+ *   isTalking         — true while in a running conversation
  */
 
 import * as THREE from 'three';
@@ -36,17 +36,23 @@ import { SittingOnBenchState } from './states/SittingOnBenchState.js';
 import { SittingOnGroundState } from './states/SittingOnGroundState.js';
 import { RestingOnGrassState } from './states/RestingOnGrassState.js';
 import { DancingState } from './states/DancingState.js';
-import { AccompanyState } from './states/AccompanyState.js';
+import { GatherState } from './states/GatherState.js';
 import { MeetingState } from './states/MeetingState.js';
 
+const SEPARATION_WEIGHT = 2;
+// States in which the agent is deliberately standing/lying/sitting still: no separation push.
+const STANDING_STATES = new Set(['chatting', 'dancing', 'sitting', 'sittingGround', 'resting', 'meeting']);
+
 export class AgentEntity extends YUKA.Vehicle {
-  constructor(scene, person, assetLibrary, { navGraph, pathSegments, rand, onArrivedAtAttraction, getAllAgents, getNight } = {}) {
+  /** Standing, sitting or lying on purpose: other agents give way instead of pushing. */
+  get holdsPosition() { return this.gatherArrived || STANDING_STATES.has(this.state); }
+
+  constructor(scene, person, assetLibrary, { navGraph, pathSegments, rand, onArrivedAtAttraction, getAllAgents, getNight, gatherings } = {}) {
     super();
 
     this.person       = person;
     this.state        = 'walking';
     this.stopped      = false;
-    this.chattingWith = null;
     this.walkingToAttraction = null;
     this.animTime     = 0;
     this.rand         = rand ?? Math.random;
@@ -61,10 +67,13 @@ export class AgentEntity extends YUKA.Vehicle {
     const bias = () => bLo + this.rand() * (bHi - bLo);
     this.idleBias = { bench: bias(), ground: bias(), rest: bias(), dance: bias() };
 
-    // Walking together (see states/AccompanyState.js, groups.js) and meeting (MeetingState.js)
-    this.groupLeader    = null;  // set on companions: who they follow
-    this.groupFollowers = [];    // set on a leader: its companions
-    this.meetCooldown   = 0;     // seconds until this agent may stop to wave at someone again
+    // Chatting and dancing happen in gatherings (gatherings.js): the agent walks to a spot,
+    // waits for the others, then the activity starts for everyone together.
+    this.gatherings     = gatherings ?? null;
+    this.gathering      = null;  // the gathering this agent is part of, or null
+    this.gatherArrived  = false; // standing at its spot, waiting for the others
+    this.gatherPhase    = null;  // 'assembling' | 'activity'
+    this.meetCooldown   = 0;     // seconds until this agent may stop to wave at someone again (MeetingState)
     this._getAllAgents  = getAllAgents ?? (() => []);
     this._getNight      = getNight ?? (() => 0);
 
@@ -131,13 +140,13 @@ export class AgentEntity extends YUKA.Vehicle {
     this.updateNeighborhood = true;
     this.neighborhoodRadius = AGENT_SEP_RADIUS;
     this.separation = new YUKA.SeparationBehavior();
-    this.separation.weight = 2;
+    this.separation.weight = SEPARATION_WEIGHT;
     this.steering.add(this.separation);
 
     this.stateMachine = new YUKA.StateMachine(this);
     this.stateMachine.add('walking', new WalkingState({ navGraph, pathSegments, onArrivedAtAttraction, getAllAgents, getNight }));
     this.stateMachine.add('chatting', new ChattingState());
-    this.stateMachine.add('accompanying', new AccompanyState());
+    this.stateMachine.add('gathering', new GatherState());
     this.stateMachine.add('meeting', new MeetingState());
     this.stateMachine.add('sitting', new SittingOnBenchState());
     this.stateMachine.add('sittingGround', new SittingOnGroundState({ pathSegments }));
@@ -146,17 +155,26 @@ export class AgentEntity extends YUKA.Vehicle {
     this.stateMachine.changeTo('walking');
   }
 
-  /** True while in a conversation: a standing chat, or walking together as a group. */
+  /** True while taking part in a running conversation (everyone has arrived and it has started). */
   get isTalking() {
-    return this.state === 'chatting' || this.groupLeader !== null || this.groupFollowers.length > 0;
+    const g = this.gathering;
+    return g !== null && g.kind === 'chat' && g.active && this.gatherPhase === 'activity';
   }
 
   /** 0 (day) … 1 (night): used to bias what agents do. */
   get night() { return this._getNight(); }
 
-  /** Face a world-space point (u, v) — used for greetings and chat facing. */
+  /** Face a world-space point (u, v) at once — used for greetings and when arriving somewhere. */
   facePoint(u, v) {
     this._facing = Math.atan2(u - this.position.x, v - this.position.z);
+  }
+
+  /** Turn smoothly toward a world-space point (call every frame), e.g. to follow a speaker. */
+  turnTowards(u, v, delta) {
+    const target = Math.atan2(u - this.position.x, v - this.position.z);
+    if (this._facing == null) { this._facing = target; return; }
+    const diff = Math.atan2(Math.sin(target - this._facing), Math.cos(target - this._facing));
+    this._facing += diff * (1 - Math.exp(-AGENT_TURN_RATE * delta));
   }
 
   /** Name of the clip to play for a role (see AGENT_CLIPS), or null if the model has none. */
@@ -303,6 +321,10 @@ export class AgentEntity extends YUKA.Vehicle {
         }
       }
     }
+
+    // Separation keeps walkers from stacking up, but it must not shove people who are standing
+    // together on purpose (a conversation ring is closer than the separation radius) or sitting.
+    this.separation.weight = this.holdsPosition ? 0 : SEPARATION_WEIGHT;
 
     // Keep the legs in step with the ground: walk/run clip rate follows actual speed.
     if (this._groundSpeed > 0) {

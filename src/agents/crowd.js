@@ -24,14 +24,14 @@ export function centroid(agents) {
 
 /**
  * True for an agent that is simply out walking: not on an errand to a landmark, not
- * paused by the UI, not in a group, and actually in the walking state (not on its way
- * to a bench or a patch of grass, which also reads 'walking').
+ * paused by the UI, not part of a gathering, and actually in the walking state (not on its
+ * way to a bench or a patch of grass, which also reads 'walking'). Only such agents can be
+ * invited to chat or dance.
  */
 export function isFreeWalker(a) {
   return a.state === 'walking'
     && !a.stopped
     && !a.walkingToAttraction
-    && a.groupLeader === null
-    && a.groupFollowers.length === 0
+    && a.gathering === null
     && a.stateMachine.currentState === a.stateMachine.states.get('walking');
 }

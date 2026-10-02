@@ -24,6 +24,8 @@
 import * as YUKA from 'yuka';
 import { AgentEntity } from './AgentEntity.js';
 import { isFreeWalker } from './crowd.js';
+import { GatheringManager } from './gatherings.js';
+import { setLandmarks, resolveCollisions } from './collision.js';
 import { ARRIVAL_WAVE_DURATION, MEET_RADIUS, MEET_CHANCE_PER_S, MEET_COOLDOWN } from '@/config.js';
 
 const GREETING_DURATION = 2.5;
@@ -40,6 +42,8 @@ export class AgentController {
     this._onArrivalDone = null;
     this._getNight  = () => 0;   // 0 (day) … 1 (night); see setNightFactor
     this._meetTimer = 0;
+    this._gatherings = new GatheringManager(() => this._rand()); // chats and dances (gatherings.js)
+    setLandmarks(attractions);
 
     if (navGraph.nodes.length < 2) return;
 
@@ -57,6 +61,7 @@ export class AgentController {
         onArrivedAtAttraction: (a, attraction) => this._onAgentArrived(a, attraction),
         getAllAgents: () => this._agents,
         getNight: () => this._getNight(),
+        gatherings: this._gatherings,
       });
       this._entityManager.add(agent);
       this._agents.push(agent);
@@ -92,14 +97,12 @@ export class AgentController {
   walkToProject(agent, attraction) {
     agent.stopped = false;
     agent.state   = 'walking';
-    agent.chattingWith = null;
     agent.walkingToAttraction = attraction;
     agent.stateMachine.changeTo('walking');
   }
 
   resumeAgent(agent) {
     agent.stopped = false;
-    agent.chattingWith = null;
     agent.walkingToAttraction = null;
     agent.maxSpeed = agent._baseSpeed;
     agent.stateMachine.changeTo('walking');
@@ -143,6 +146,8 @@ export class AgentController {
     }
 
     this._checkMeetings(dt);
+    this._gatherings.update(dt);
+    resolveCollisions(this._agents);
     this._entityManager.update(dt);
   }
 

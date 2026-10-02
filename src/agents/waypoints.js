@@ -96,13 +96,38 @@ export function buildStrollWaypoints(pos, pathSegments, rand, avoidEndId) {
   return waypoints;
 }
 
+const ARC_STEP = 6; // world units between waypoints on a plaza rim
+
+/**
+ * Waypoints along the shorter arc around `node` from `from` to `to` (both on its plaza rim),
+ * excluding the end points. Empty when they are already close together.
+ */
+function arcAroundNode(node, from, to) {
+  if (!node || !from) return [];
+  const cu = node.u ?? node.x ?? 0, cv = node.v ?? node.y ?? 0;
+  const r0 = Math.hypot(from.u - cu, from.v - cv), r1 = Math.hypot(to.u - cu, to.v - cv);
+  if (Math.hypot(to.u - from.u, to.v - from.v) < ARC_STEP * 1.5 || r0 < 1 || r1 < 1) return [];
+  const a0 = Math.atan2(from.v - cv, from.u - cu);
+  let delta = Math.atan2(to.v - cv, to.u - cu) - a0;
+  delta = Math.atan2(Math.sin(delta), Math.cos(delta)); // shorter way round
+  const steps = Math.ceil(Math.abs(delta) * Math.max(r0, r1) / ARC_STEP);
+  const pts = [];
+  for (let i = 1; i < steps; i++) {
+    const t = i / steps, a = a0 + delta * t, r = r0 + (r1 - r0) * t;
+    pts.push({ u: cu + Math.cos(a) * r, v: cv + Math.sin(a) * r });
+  }
+  return pts;
+}
+
 /**
  * Build a directed waypoint chain from the agent's current position to a
  * target attraction, following the path network rather than a straight line.
  *
- * Routes over the sparse nav graph (Dijkstra) between the nearest nav node
- * to `pos` and the attraction's navNodeId, then expands each graph hop into
- * fine waypoints by walking the corresponding rendered path segment.
+ * The agent joins the network at the nearest *path point* (not the nearest node, which
+ * may lie behind it or across the grass), walks to whichever end of that segment gives
+ * the shorter total trip, then routes over the sparse nav graph (Dijkstra) to the
+ * attraction's navNodeId, expanding each graph hop into fine waypoints along the rendered
+ * path segment.
  *
  * @param {{u,v}}         pos
  * @param {AttractionInstance} attraction
@@ -112,17 +137,44 @@ export function buildStrollWaypoints(pos, pathSegments, rand, avoidEndId) {
  */
 export function buildRouteWaypoints(pos, attraction, navGraph, pathSegments) {
   const { adjacency, nodeMap } = navGraph;
+  const straight = [{ u: pos.u, v: pos.v }, { u: attraction.displayU, v: attraction.displayV }];
 
-  let startId = null, bestDist = Infinity;
-  for (const node of navGraph.nodes) {
-    const d = (node.u - pos.u) ** 2 + (node.v - pos.v) ** 2;
-    if (d < bestDist) { bestDist = d; startId = node.id; }
+  // Nearest point on the path network.
+  let seg0 = null, idx0 = 0, bestDist = Infinity;
+  for (const seg of pathSegments) {
+    for (let i = 0; i < seg.pts.length; i++) {
+      const d = (seg.pts[i].u - pos.u) ** 2 + (seg.pts[i].v - pos.v) ** 2;
+      if (d < bestDist) { bestDist = d; seg0 = seg; idx0 = i; }
+    }
   }
-  if (startId == null) return [{ u: pos.u, v: pos.v }, { u: attraction.displayU, v: attraction.displayV }];
+  if (!seg0) return straight;
 
   const goalId = attraction.navNodeId;
-  const nodeIds = dijkstraPath(adjacency, startId, goalId, nodeMap);
-  if (nodeIds.length === 0) return [{ u: pos.u, v: pos.v }, { u: attraction.displayU, v: attraction.displayV }];
+  const hopLength = (a, b) => {
+    const na = nodeMap.get(a), nb = nodeMap.get(b);
+    return na && nb ? Math.hypot((nb.u ?? nb.x ?? 0) - (na.u ?? na.x ?? 0), (nb.v ?? nb.y ?? 0) - (na.v ?? na.y ?? 0)) : 1;
+  };
+  const arcLength = pts => {
+    let L = 0;
+    for (let i = 1; i < pts.length; i++) L += Math.hypot(pts[i].u - pts[i - 1].u, pts[i].v - pts[i - 1].v);
+    return L;
+  };
+
+  // Leave the segment through either end: the part of the segment still to walk, the node
+  // reached, and the graph route on from there. Take the cheapest.
+  const exits = [
+    { tail: seg0.pts.slice(idx0),                 nodeId: seg0.edgeToId },
+    { tail: seg0.pts.slice(0, idx0 + 1).reverse(), nodeId: seg0.edgeFromId },
+  ];
+  let best = null;
+  for (const e of exits) {
+    const route = dijkstraPath(adjacency, e.nodeId, goalId, nodeMap);
+    if (route.length === 0) continue;
+    let cost = arcLength(e.tail);
+    for (let i = 0; i < route.length - 1; i++) cost += hopLength(route[i], route[i + 1]);
+    if (!best || cost < best.cost) best = { cost, tail: e.tail, route };
+  }
+  if (!best) return straight;
 
   // Index segments by the node-pair they connect, either direction.
   const segByPair = new Map();
@@ -131,13 +183,17 @@ export function buildRouteWaypoints(pos, attraction, navGraph, pathSegments) {
     segByPair.set(`${seg.edgeToId}|${seg.edgeFromId}`, seg);
   }
 
-  const waypoints = [];
+  const waypoints = best.tail.map(pt => ({ u: pt.u, v: pt.v }));
+  const nodeIds = best.route;
   for (let i = 0; i < nodeIds.length - 1; i++) {
     const a = nodeIds[i], b = nodeIds[i + 1];
     const seg = segByPair.get(`${a}|${b}`);
     if (!seg) continue;
     const forward = seg.edgeFromId === a;
     const pts = forward ? seg.pts : [...seg.pts].reverse();
+    // Segments end at the rim of the node's plaza: go round the rim to the next one instead of
+    // cutting across the plaza (and through its landmark).
+    waypoints.push(...arcAroundNode(nodeMap.get(a), waypoints[waypoints.length - 1], pts[0]));
     for (const pt of pts) waypoints.push({ u: pt.u, v: pt.v });
   }
 

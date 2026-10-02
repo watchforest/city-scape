@@ -1,15 +1,18 @@
 /**
- * Floating conversation fragment bubbles above chatting agents.
+ * Floating conversation fragment bubbles above talking agents.
  *
- * Works like sleepZs — world-space THREE.Sprite that rises and fades.
- * One fragment is emitted per agent pair at the start of a chat, then
- * periodically during the chat. Each uses a freshly rendered canvas texture
- * so any quote string can be displayed without a texture atlas.
+ * Works like sleepZs — world-space THREE.Sprite that rises and fades. Each uses a freshly
+ * rendered canvas texture so any quote string can be displayed without a texture atlas.
+ *
+ * A conversation is a running 'chat' gathering (agents/gatherings.js). Its members take
+ * turns: one bubble at a time per conversation, a short silence between speakers, and the
+ * current speaker is recorded in gathering.speaker so the others turn to face them. A
+ * bubble also waits if another one is still visible close by, so they never cover each other.
  */
 
 import * as THREE from 'three';
+import { CHAT_BUBBLE_GAP, CHAT_BUBBLE_CLEARANCE } from '@/config.js';
 
-const SPAWN_INTERVAL  = 3.5;   // seconds between fragments per chatting agent
 const LIFETIME        = 4.0;   // seconds a fragment lives
 const RISE_HEIGHT     = 5;     // world units risen over lifetime
 const HEIGHT_START    = 7;     // world units above agent origin
@@ -18,9 +21,7 @@ const MAX_LINE_CHARS  = 28;    // wrap text beyond this width
 let _scene  = null;
 let _quotes = [];
 
-// Per-agent spawn timer
-const _agentTimers = new WeakMap();
-// Active fragments: { sprite, age }
+// Active fragments: { sprite, age, startY, owner: the conversation (gathering) it belongs to }
 const _particles   = [];
 
 export function initChatBubbles(scene, quotes) {
@@ -115,19 +116,33 @@ function _makeFragmentTexture(text) {
 export function updateChatBubbles(agents, dt) {
   if (!_scene) return;
 
+  // The conversations running right now.
+  const conversations = new Set();
   for (const agent of agents) {
-    // isTalking: a standing chat, or walking together as a group
-    if (!agent.isTalking || agent.stopped) {
-      _agentTimers.delete(agent);
+    if (agent.isTalking && !agent.stopped) conversations.add(agent.gathering);
+  }
+
+  for (const g of conversations) {
+    // One speaker at a time: wait until this conversation's last bubble is gone, then a pause.
+    if (_particles.some(p => p.owner === g)) { g._silence = CHAT_BUBBLE_GAP; continue; }
+    g._silence = (g._silence ?? CHAT_BUBBLE_GAP) - dt;
+    if (g._silence > 0) continue;
+
+    const speakers = g.members.filter(m => m.isTalking && !m.stopped);
+    if (speakers.length < 2) continue;
+    g._turn = ((g._turn ?? -1) + 1) % speakers.length;     // take turns round the group
+    const speaker = speakers[g._turn];
+
+    // Don't start on top of another conversation's bubble that is still visible nearby: retry
+    // this speaker next frame.
+    const sp = speaker.mesh.position;
+    if (_particles.some(p => Math.hypot(p.sprite.position.x - sp.x, p.sprite.position.z - sp.z) < CHAT_BUBBLE_CLEARANCE)) {
+      g._turn -= 1;
       continue;
     }
 
-    const elapsed = (_agentTimers.get(agent) ?? SPAWN_INTERVAL) + dt;
-    _agentTimers.set(agent, elapsed % SPAWN_INTERVAL);
-
-    if (elapsed >= SPAWN_INTERVAL) {
-      _spawnFragment(agent);
-    }
+    g.speaker = speaker;
+    _spawnFragment(speaker, g);
   }
 
   // Update existing particles
@@ -165,7 +180,7 @@ function _pickQuote(agent) {
   return pool[Math.floor(Math.random() * pool.length)];
 }
 
-function _spawnFragment(agent) {
+function _spawnFragment(agent, owner) {
   const quote = _pickQuote(agent);
   if (!quote) return;
   const tex = _makeFragmentTexture(quote);
@@ -183,9 +198,8 @@ function _spawnFragment(agent) {
   sprite.scale.set(baseH * tex.userData.aspect, baseH, 1);
 
   const ap = agent.mesh.position;
-  const jitter = (Math.random() - 0.5) * 2;
-  sprite.position.set(ap.x + jitter, ap.y + HEIGHT_START, ap.z + jitter);
+  sprite.position.set(ap.x, ap.y + HEIGHT_START, ap.z);
 
   _scene.add(sprite);
-  _particles.push({ sprite, age: 0, startY: sprite.position.y });
+  _particles.push({ sprite, age: 0, startY: sprite.position.y, owner });
 }

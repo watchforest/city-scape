@@ -65,8 +65,8 @@ export const AGENT_BIAS_RANGE   = [0.5, 1.5];  // each agent's personal multipli
 
 // Agent behaviour timers (seconds)
 export const ARRIVAL_WAVE_DURATION = 4;   // wave at a project landmark, then walk on
-export const CHAT_MIN = 5;
-export const CHAT_MAX = 15;
+export const CHAT_MIN = 12;   // a conversation lasts this long once everyone has arrived
+export const CHAT_MAX = 26;
 export const REST_MIN = 5;
 export const REST_MAX = 20;
 
@@ -81,40 +81,48 @@ export const PROB_CHAT = 0.10;
 //   dance  — dance on the spot (Dancing-1..3)
 // An unavailable choice (no free bench, no grass spot) falls back as noted in idleSelection.js.
 export const IDLE_WEIGHTS = { bench: 0.30, ground: 0.20, rest: 0.25, dance: 0.25 };
-export const DANCE_MIN = 6;
-export const DANCE_MAX = 14;
+export const DANCE_MIN = 12;  // a dance lasts this long once the dancers have all arrived
+export const DANCE_MAX = 24;
+
+// Gatherings (src/agents/gatherings.js): chatting and dancing are done *together, standing in
+// one place*. An initiator invites nearby free walkers; everyone walks to a ring around a
+// meeting point; only once they have arrived does the activity start, for everyone at once.
+// If fewer than two make it, nothing happens; if the group drops below two, it ends.
+export const GATHER_MAX_SIZE      = 3;    // initiator + up to 2 others
+export const GATHER_TIMEOUT       = 28;   // seconds to assemble before the stragglers are dropped
+export const GATHER_CHAT_RADIUS   = 2.4;  // ring radius for a conversation (people stand close)
+export const GATHER_DANCE_RADIUS  = 3.6;  // ring radius for a dance (room to move)
+export const GATHER_JOIN_CHANCE   = 0.75; // each extra invitee accepts with this chance (the nearest always does)
+
+// Chatting: who an agent seeks out when it decides to talk.
+export const CHAT_SEEK_RADIUS     = 45;   // free walkers within this can be invited
+// Conversation bubbles (ui/chatBubbles.js): one speaker at a time per conversation.
+export const CHAT_BUBBLE_GAP      = 0.7;  // seconds of silence between two speakers
+export const CHAT_BUBBLE_CLEARANCE = 22;  // don't start a bubble within this (horizontal) distance of a visible one
 
 // Dancing is a group activity: nobody dances alone.
-//   - A new dance only starts where at least DANCE_START_CROWD other agents are within DANCE_GATHER_RADIUS.
-//   - The more agents gathered, the more attractive dancing is (weight × (1 + DANCE_CROWD_BOOST per extra agent)).
-//   - An agent finishing a stroll near people already dancing joins in with DANCE_JOIN_CHANCE.
-export const DANCE_GATHER_RADIUS = 45;   // who counts as "around" (free walkers who could join) and gets invited
-export const DANCE_START_CROWD   = 1;    // free walkers needed within the radius for a new dance to start
+//   - A dance is only started when at least one free walker is near enough to be invited, and it
+//     only *begins* once at least two agents have actually arrived. Agents merely standing around
+//     don't count.
+//   - The more free walkers around, the more attractive starting one is (weight × (1 + DANCE_CROWD_BOOST per extra)).
+//   - An agent finishing a stroll near an ongoing dance usually joins it (DANCE_JOIN_CHANCE).
+export const DANCE_GATHER_RADIUS = 45;   // free walkers within this can be invited
+export const DANCE_START_CROWD   = 1;    // invitable free walkers needed for a new dance to be considered
 export const DANCE_CROWD_BOOST   = 0.6;
 export const DANCE_JOIN_RADIUS   = 60;
-export const DANCE_ALONE_GRACE   = 25;   // seconds a dancer waits for company (invitees may be a walk away) before giving up
 export const DANCE_JOIN_CHANCE   = 0.7;
-export const DANCE_RING_RADIUS   = [3, 6];  // joiners settle this far from the group's centre
 
 // Time of day: at night agents favour sitting and resting, by day dancing. 0 = no effect.
 // Applied as weight × (1 + boost × night), night = 0 (day) … 1 (full night).
 export const NIGHT_WEIGHT_BOOST = { bench: 0.8, ground: 0.8, rest: 0.8, dance: -0.7 };
 
-// Walking together. A walker may recruit nearby walkers to go along (and talk) for the rest
-// of its stroll; at the end the group usually stops for a chat, otherwise disperses.
-export const GROUP_WALK_CHANCE    = 0.2;  // per stroll start
-export const GROUP_RECRUIT_RADIUS = 25;
-export const GROUP_MAX_SIZE       = 3;    // leader + up to 2 companions
-export const GROUP_SPACING        = 3.5;  // companions walk this far beside/behind the leader
-export const GROUP_CHAT_AFTER     = 0.6;  // chance the group stops to chat when the stroll ends
-
 // Two walkers who pass close to each other may stop and wave (Waving-both-arms), and then
-// sometimes carry on as a walking group.
+// sometimes stand and talk.
 export const MEET_RADIUS        = 7;
 export const MEET_CHANCE_PER_S  = 0.25;  // while two eligible agents are within MEET_RADIUS
 export const MEET_COOLDOWN      = 40;    // seconds before an agent can meet again
 export const MEET_WAVE_DURATION = 2.8;
-export const MEET_GROUP_CHANCE  = 0.5;
+export const MEET_CHAT_CHANCE   = 0.5;   // chance the two stay to talk after waving
 
 // Grass spots for sitting/resting off the path (src/agents/grassSpots.js)
 export const GRASS_SEARCH_RADIUS = 45;  // path samples within this of the agent are candidates
@@ -163,6 +171,8 @@ export const TERRAIN_MESA_BLEND  = 0;    // 0 = fully smooth hills, 1 = fully st
 // Steering behaviour constants
 export const AGENT_ARRIVE_RADIUS  = 10;  // slow-down zone (world units)
 export const AGENT_SEP_RADIUS     = 8;   // separation distance
+export const AGENT_RADIUS         = 0.9; // agents never get closer than twice this (agents/collision.js)
+export const LANDMARK_BLOCK_SCALE = 0.8; // share of a landmark's bounding radius that agents can't enter
 export const AGENT_SEP_STRENGTH   = 20;  // separation force magnitude
 export const AGENT_WANDER_AMP     = 1.5; // wander perpendicular amplitude
 export const AGENT_WANDER_FREQ    = 0.3; // wander oscillation frequency

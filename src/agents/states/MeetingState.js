@@ -1,15 +1,14 @@
 /**
  * MeetingState — two walkers pass close to each other, stop, face one another and wave
  * (Waving-both-arms or Waving). Afterwards the pair usually just carries on; sometimes the
- * one who started it asks the other along and they walk off together as a group.
+ * one who started it stays to talk, and they step together and chat (a 'chat' gathering).
  *
  * Set agent._meetPartner (and agent._meetInitiator on one of the two) before changing to
  * this state; AgentController does that when it spots a meeting.
  */
 
 import * as YUKA from 'yuka';
-import { MEET_WAVE_DURATION, MEET_GROUP_CHANCE } from '@/config.js';
-import { formGroup } from '../groups.js';
+import { MEET_WAVE_DURATION, MEET_CHAT_CHANCE, CHAT_MIN, CHAT_MAX } from '@/config.js';
 
 export class MeetingState extends YUKA.State {
   enter(agent) {
@@ -36,12 +35,15 @@ export class MeetingState extends YUKA.State {
     this._timer -= agent._lastDelta ?? 0;
     if (this._timer > 0) return;
 
-    // The initiator decides whether the two go off together or just carry on separately.
+    // The initiator decides whether the two stay and talk (stepping closer, then standing still
+    // to chat) or just carry on separately.
     const partnerHere = !!p && p.state === 'meeting' && !p.stopped;
-    const together = this._initiator && partnerHere && agent.rand() < MEET_GROUP_CHANCE;
-    if (this._initiator && partnerHere && !together) p.stateMachine.changeTo('walking');
+    if (this._initiator && partnerHere && agent.rand() < MEET_CHAT_CHANCE) {
+      const duration = CHAT_MIN + agent.rand() * (CHAT_MAX - CHAT_MIN);
+      if (agent.gatherings.create('chat', agent, [p], duration)) return; // both are now gathering
+    }
+    if (this._initiator && partnerHere) p.stateMachine.changeTo('walking');
     agent.stateMachine.changeTo('walking');
-    if (together) formGroup(agent, [p]);
   }
 
   exit(agent) {

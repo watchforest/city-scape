@@ -1,26 +1,27 @@
 /**
  * Behaviour selection — decides what a walking agent does when it finishes its
- * current stroll: keep walking, stop to chat with a nearby idle agent, or go idle
- * (sit on a bench, sit on the grass, rest on the grass, or dance).
+ * current stroll: keep walking, go and talk with someone, or go idle (sit on a bench, sit
+ * on the grass, rest on the grass, or dance).
  *
  * The result's `kind` is the state id to switch to, except 'walking' (keep strolling).
+ * Chatting and dancing are done *together*: the result carries the people to invite
+ * (`partners`) or a dance to join (`join`), and WalkingState turns that into a gathering
+ * (gatherings.js) in which everyone walks to a meeting spot and stands there before it starts.
  * Activities that need a spot (bench / grass) fall back inside their own state when none
  * is free: bench → resting → walking.
  *
  * What an agent picks is shaped by:
  *   - IDLE_WEIGHTS, times the agent's own taste (agent.idleBias)
  *   - the time of day (NIGHT_WEIGHT_BOOST): more sitting and resting at night, more dancing by day
- *   - the crowd: dancing only happens where people are gathered, gets likelier the more there
- *     are, and an agent near people already dancing usually joins them
+ *   - company: dancing is only on the table if someone free could be invited to it, gets
+ *     likelier the more there are, and an agent near a running dance usually joins it
  */
 
 import {
-  PROB_WALK, PROB_CHAT, CHAT_MIN, CHAT_MAX, IDLE_WEIGHTS, NIGHT_WEIGHT_BOOST,
-  DANCE_GATHER_RADIUS, DANCE_START_CROWD, DANCE_CROWD_BOOST, DANCE_JOIN_RADIUS, DANCE_JOIN_CHANCE,
+  PROB_WALK, PROB_CHAT, IDLE_WEIGHTS, NIGHT_WEIGHT_BOOST, CHAT_SEEK_RADIUS, GATHER_MAX_SIZE, GATHER_JOIN_CHANCE,
+  DANCE_GATHER_RADIUS, DANCE_START_CROWD, DANCE_CROWD_BOOST, DANCE_JOIN_CHANCE,
 } from '@/config.js';
-import { nearby, centroid, isFreeWalker } from './crowd.js';
-
-const CHAT_SEARCH_RADIUS = 15;
+import { nearby, isFreeWalker } from './crowd.js';
 
 /**
  * @param {AgentEntity}   agent
@@ -28,8 +29,8 @@ const CHAT_SEARCH_RADIUS = 15;
  * @param {function}      rand
  * @param {number}        night — 0 (day) … 1 (night)
  * @returns {{ kind: 'walking' | 'sitting' | 'sittingGround' | 'resting' }
- *         | { kind: 'dancing', join?: { center, clip } }
- *         | { kind: 'chatting', duration, partner }}
+ *         | { kind: 'chatting', partners: AgentEntity[] }
+ *         | { kind: 'dancing', partners?: AgentEntity[], join?: object }}
  */
 export function selectNextBehaviour(agent, allAgents, rand, night = 0) {
   const roll = rand();
@@ -37,12 +38,9 @@ export function selectNextBehaviour(agent, allAgents, rand, night = 0) {
   if (roll < PROB_WALK) return { kind: 'walking' };
 
   if (roll < PROB_WALK + PROB_CHAT) {
-    const partner = findChatPartner(agent, allAgents, rand);
-    if (partner) {
-      const duration = CHAT_MIN + rand() * (CHAT_MAX - CHAT_MIN);
-      return { kind: 'chatting', duration, partner };
-    }
-    // No partner nearby — fall through to an idle activity.
+    const partners = pickPartners(agent, allAgents, CHAT_SEEK_RADIUS, rand);
+    if (partners.length) return { kind: 'chatting', partners };
+    // Nobody free to talk to — fall through to an idle activity.
   }
 
   return pickIdleActivity(agent, allAgents, rand, night);
@@ -50,38 +48,45 @@ export function selectNextBehaviour(agent, allAgents, rand, night = 0) {
 
 const IDLE_KINDS = { bench: 'sitting', ground: 'sittingGround', rest: 'resting', dance: 'dancing' };
 
-function pickIdleActivity(agent, allAgents, rand, night) {
-  // People already dancing close by (not one still waiting for company): usually join them.
-  const dancers = nearby(agent, allAgents, DANCE_JOIN_RADIUS, a => a.state === 'dancing' && a.currentRole === 'dance');
-  if (dancers.length && rand() < DANCE_JOIN_CHANCE) {
-    return { kind: 'dancing', join: { center: centroid(dancers), clip: dancers[0].currentClipName } };
+/**
+ * Free walkers near `agent` to invite, nearest first: the nearest always comes, each further
+ * one with GATHER_JOIN_CHANCE, up to the group size limit.
+ */
+function pickPartners(agent, allAgents, radius, rand) {
+  const candidates = nearby(agent, allAgents, radius, isFreeWalker)
+    .sort((a, b) => a.position.squaredDistanceTo(agent.position) - b.position.squaredDistanceTo(agent.position));
+  const partners = [];
+  for (const [i, c] of candidates.entries()) {
+    if (partners.length >= GATHER_MAX_SIZE - 1) break;
+    if (i === 0 || rand() < GATHER_JOIN_CHANCE) partners.push(c);
   }
+  return partners;
+}
 
-  // Otherwise weigh the activities.
-  // Dancing needs company that could actually join: free walkers nearby (not someone asleep on a
-  // bench). With none around it is off the table; the more there are, the more tempting it is.
-  const crowd = nearby(agent, allAgents, DANCE_GATHER_RADIUS, isFreeWalker).length;
+function pickIdleActivity(agent, allAgents, rand, night) {
+  // A dance is running close by: usually join it.
+  const dance = agent.gatherings.findDanceToJoin(agent);
+  if (dance && rand() < DANCE_JOIN_CHANCE) return { kind: 'dancing', join: dance };
+
+  // Otherwise weigh the activities. Dancing needs someone free who could actually be invited
+  // (people sitting on benches or standing in a conversation don't count); the more there are,
+  // the more tempting it is.
+  const invitable = nearby(agent, allAgents, DANCE_GATHER_RADIUS, isFreeWalker).length;
   const weights = {};
   for (const [key, base] of Object.entries(IDLE_WEIGHTS)) {
     weights[key] = base * (agent.idleBias?.[key] ?? 1) * Math.max(0, 1 + (NIGHT_WEIGHT_BOOST[key] ?? 0) * night);
   }
-  weights.dance = crowd >= DANCE_START_CROWD
-    ? weights.dance * (1 + DANCE_CROWD_BOOST * (crowd - DANCE_START_CROWD))
+  weights.dance = invitable >= DANCE_START_CROWD
+    ? weights.dance * (1 + DANCE_CROWD_BOOST * (invitable - DANCE_START_CROWD))
     : 0;
 
   const entries = Object.entries(weights);
   let pick = rand() * entries.reduce((sum, [, w]) => sum + w, 0);
-  for (const [key, w] of entries) {
-    if ((pick -= w) < 0) return { kind: IDLE_KINDS[key] };
+  let key = entries[entries.length - 1][0];
+  for (const [k, w] of entries) {
+    if ((pick -= w) < 0) { key = k; break; }
   }
-  return { kind: IDLE_KINDS[entries[entries.length - 1][0]] };
-}
 
-function findChatPartner(agent, allAgents, rand) {
-  const candidates = nearby(agent, allAgents, CHAT_SEARCH_RADIUS, a =>
-    !a.stopped
-    && a.groupLeader === null
-    && (a.state === 'resting' || a.state === 'sitting' || a.state === 'sittingGround'));
-  if (candidates.length === 0) return null;
-  return candidates[Math.floor(rand() * candidates.length)];
+  if (key === 'dance') return { kind: 'dancing', partners: pickPartners(agent, allAgents, DANCE_GATHER_RADIUS, rand) };
+  return { kind: IDLE_KINDS[key] };
 }
