@@ -1,5 +1,5 @@
 import {
-  SEED, CAM_FRAME_PERSON, CAM_FRAME_ARRIVAL, CAM_FRAME_PERSON_FROM_LIST,
+  SEED, CAM_FRAME_PERSON, CAM_FRAME_PERSON_FROM_LIST,
   CAM_FRAME_LANDMARK_PER_RADIUS, CAM_FRAME_LANDMARK_MIN,
 } from './config.js';
 import { mulberry32 } from './utils/prng.js';
@@ -110,8 +110,15 @@ async function init() {
   const agentController = new AgentController(
     scene, navGraph, personNodes, attractions, assetLibrary, pathSegments,
     (agent, attraction) => {
-      showProjectOverlay(attraction, personNodes, _releaseActive);
-      camController.zoomTo(agent.mesh.position, CAM_FRAME_ARRIVAL);
+      // The agent led us here: select the landmark immediately (the agent keeps
+      // waving) and frame the landmark itself. Closing zooms out from the landmark
+      // rather than flying back to wherever the agent was first selected.
+      showProjectOverlay(attraction, personNodes, () => camController.zoomOut());
+      camController.zoomTo(
+        { x: attraction.displayU, y: 0, z: attraction.displayV },
+        landmarkFrameDistance(attraction),
+        { zoomOutHere: true },
+      );
     }
   );
   agentController.setRand(rand);
@@ -123,6 +130,13 @@ async function init() {
     const agent = agentController.getAgents().find(a => a.person.id === person.id);
     if (!agent) return;
     hideProjectOverlay();
+  // The agent walks on by itself after waving; stop tracking it as the selected agent.
+  agentController.setArrivalDoneCallback(agent => { if (activeAgent === agent) activeAgent = null; });
+
+  /** Camera distance that frames a landmark; wider landmarks are framed from further back. */
+  function landmarkFrameDistance(attraction) {
+    return Math.max(CAM_FRAME_LANDMARK_MIN, attraction.footprintRadius * CAM_FRAME_LANDMARK_PER_RADIUS);
+  }
     _selectAgent(agent);
   });
 
@@ -153,10 +167,7 @@ async function init() {
     (attraction) => {
       hideBubble();
       showProjectOverlay(attraction, personNodes, () => camController.zoomOut());
-      camController.zoomTo(
-        { x: attraction.displayU, y: 0, z: attraction.displayV },
-        Math.max(CAM_FRAME_LANDMARK_MIN, attraction.footprintRadius * CAM_FRAME_LANDMARK_PER_RADIUS)
-      );
+      camController.zoomTo({ x: attraction.displayU, y: 0, z: attraction.displayV }, landmarkFrameDistance(attraction));
     }
   );
 

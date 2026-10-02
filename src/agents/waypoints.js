@@ -118,11 +118,11 @@ export function buildRouteWaypoints(pos, attraction, navGraph, pathSegments) {
     const d = (node.u - pos.u) ** 2 + (node.v - pos.v) ** 2;
     if (d < bestDist) { bestDist = d; startId = node.id; }
   }
-  if (startId == null) return [{ u: attraction.displayU, v: attraction.displayV }];
+  if (startId == null) return [{ u: pos.u, v: pos.v }, { u: attraction.displayU, v: attraction.displayV }];
 
   const goalId = attraction.navNodeId;
   const nodeIds = dijkstraPath(adjacency, startId, goalId, nodeMap);
-  if (nodeIds.length === 0) return [{ u: attraction.displayU, v: attraction.displayV }];
+  if (nodeIds.length === 0) return [{ u: pos.u, v: pos.v }, { u: attraction.displayU, v: attraction.displayV }];
 
   // Index segments by the node-pair they connect, either direction.
   const segByPair = new Map();
@@ -143,6 +143,11 @@ export function buildRouteWaypoints(pos, attraction, navGraph, pathSegments) {
 
   // Final approach to the attraction's actual display position.
   waypoints.push({ u: attraction.displayU, v: attraction.displayV });
+
+  // Always start from where the agent actually is. Without this, an agent whose
+  // nearest nav node is already the goal gets a one-waypoint route, which counts
+  // as finished immediately — it would "arrive" without walking anywhere.
+  waypoints.unshift({ u: pos.u, v: pos.v });
 
   return waypoints;
 }

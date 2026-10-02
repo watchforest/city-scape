@@ -3,6 +3,10 @@
 .playwright-mcp/
 screenshot_archive/
 
+# Full-size source models (uncompressed/unsimplified originals). Local only — the
+# optimised versions in public/assets/models are what gets committed and served.
+assets-src/
+
 # macOS
 .DS_Store
 **/.DS_Store

@@ -21,7 +21,7 @@ export class ChattingState extends YUKA.State {
     agent.state = 'chatting';
     agent.chattingWith = partner ?? null;
     agent.velocity.set(0, 0, 0);
-    agent._playClip?.('idle');
+    agent.playRole('idle');
     this._timer = duration ?? 5;
   }
 

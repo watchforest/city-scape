@@ -6,7 +6,7 @@
 
 import * as THREE from 'three';
 
-const IDLE_STATES = new Set(['resting', 'stretching']);
+const IDLE_STATES = new Set(['resting']);
 const SPAWN_INTERVAL = 1.2; // seconds between Zs per agent
 const LIFETIME = 2.0;       // seconds a Z lives
 const Z_HEIGHT_START = 6;   // world units above agent origin

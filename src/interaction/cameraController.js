@@ -25,6 +25,7 @@ export class CameraController {
     this._mode = 'free';
     this._followTarget = null;
     this._followDist = 0;
+    this._zoomOutHere = false; // zoomOut() pulls back from the current target instead of returning to the saved view
 
     this._dir = new THREE.Vector3(0, 1, 1).normalize(); // target -> camera
     this._savedTarget = controls.target.clone();
@@ -74,10 +75,15 @@ export class CameraController {
    * The distance is absolute (not relative to the current zoom), but never
    * farther than the view the user started from, so clicking while already
    * zoomed in doesn't pull the camera back out.
+   *
+   * zoomOutHere: when the selection was reached by something other than the user
+   * (an agent leading them to a landmark), the saved view is meaningless, so
+   * zoomOut() pulls back from this target rather than flying to the saved view.
    */
-  zoomTo(worldPos, distance) {
+  zoomTo(worldPos, distance, { zoomOutHere = false } = {}) {
     this._beginInteraction();
     this._followTarget = null;
+    this._zoomOutHere = zoomOutHere;
     this._startAnim(
       new THREE.Vector3(worldPos.x, 0, worldPos.z),
       Math.min(distance, this._savedDist),
@@ -90,19 +96,22 @@ export class CameraController {
     this._beginInteraction();
     this._followTarget = mesh;
     this._followDist = Math.min(distance, this._savedDist);
+    this._zoomOutHere = false;
     this._mode = 'follow';
   }
 
-  /** Fly back to the saved free position. */
+  /** Fly back to the saved free position (or pull back in place, see zoomTo). */
   zoomOut() {
     if (this._mode === 'free') return;
     this._followTarget = null;
-    this._startAnim(this._savedTarget, this._savedDist, 'zoomout');
+    const target = this._zoomOutHere ? this._curTarget : this._savedTarget;
+    this._startAnim(target, this._savedDist, 'zoomout');
   }
 
   release() {
     this._mode = 'free';
     this._followTarget = null;
+    this._zoomOutHere = false;
     this._controls.enabled = true;
   }
 

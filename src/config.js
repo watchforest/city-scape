@@ -8,7 +8,6 @@ export const CAM_DIST     = 400;   // for the reference-size park; scaled with t
 // they don't depend on how far out the user was when they clicked). These match
 // the old "400 / zoom level" values at the default view.
 export const CAM_FRAME_PERSON    = 50;   // click an agent
-export const CAM_FRAME_ARRIVAL   = 90;   // agent arrives at a project (overlay opens)
 export const CAM_FRAME_PERSON_FROM_LIST = 115; // pick a team member from the overlay
 export const CAM_FRAME_FOLLOW    = 90;   // following a walking agent
 export const CAM_FRAME_LANDMARK_PER_RADIUS = 8; // landmark: distance = footprint radius × this …
@@ -39,8 +38,11 @@ export const REED_COLOR        = 0x2d5a27;  // lake reeds
 export const CLOUD_COLOR       = 0xffffff;  // cloud blobs
 
 // People agent settings
-export const AGENT_SPEED        = 12; // world units per second
-export const AGENT_SPRINT_SPEED = 36; // world units per second (walking to project)
+// Uniform scale applied to every character model (no auto-fit)
+export const AGENT_SCALE        = 1.5;
+export const AGENT_SPEED        = 4.5; // world units per second (walking pace — see AGENT_WALK_TIMESCALE)
+export const AGENT_SPRINT_SPEED = 12;  // world units per second (running to a project)
+export const AGENT_TURN_RATE    = 10;  // how quickly an agent turns to face its travel direction (1/s; higher = snappier)
 
 // Agent behaviour timers (seconds)
 export const CHAT_MIN = 5;
@@ -48,11 +50,48 @@ export const CHAT_MAX = 15;
 export const REST_MIN = 5;
 export const REST_MAX = 20;
 
-// Behaviour selection probabilities — states: walking | chatting | idle
-// (idle then resolves to sitting-on-bench if a seat is free, else resting-on-grass).
-export const PROB_WALK = 0.75;
+// Behaviour selection probabilities, rolled when a stroll ends.
+// Walk on, chat with a nearby idle agent, or go idle (remainder).
+export const PROB_WALK = 0.65;
 export const PROB_CHAT = 0.10;
-// Remainder (1 - PROB_WALK - PROB_CHAT) goes idle.
+// When going idle, relative weights of the idle activities:
+//   bench  — walk to a free bench and sit (Sitting-1)
+//   ground — walk to grass beside a path and sit down on it (Stand-To-Sit)
+//   rest   — walk to grass beside a path and rest (Resting-1)
+//   dance  — dance on the spot (Dancing-1..3)
+// An unavailable choice (no free bench, no grass spot) falls back as noted in idleSelection.js.
+export const IDLE_WEIGHTS = { bench: 0.30, ground: 0.20, rest: 0.25, dance: 0.25 };
+export const DANCE_MIN = 6;
+export const DANCE_MAX = 14;
+
+// Grass spots for sitting/resting off the path (src/agents/grassSpots.js)
+export const GRASS_SEARCH_RADIUS = 45;  // path samples within this of the agent are candidates
+export const GRASS_EDGE_MIN      = 2;   // extra distance beyond the path edge (world units)
+export const GRASS_EDGE_MAX      = 7;
+export const GRASS_SPOT_SPACING  = 6;   // minimum distance between two claimed spots
+
+// Animation clips in the character GLB, by role (names are case-sensitive).
+//   clips    — the clips for this role; if several exist, one is picked at random
+//   fallback — used (first one the model has) when none of `clips` exist, so custom
+//              character models with fewer clips still animate
+//   once     — play once and hold the last frame instead of looping
+// Walking clips are played in place (root motion stripped, see assets/rootMotion.js).
+// Their playback rate follows the agent's actual speed every frame so the feet
+// match the ground (slowing as it slows, stopping as it stops); this clamps the
+// rate so a big mismatch can't make the legs look frantic.
+export const AGENT_WALK_TIMESCALE = { min: 0.3, max: 2.5 };
+
+export const AGENT_CLIPS = {
+  idle:      { clips: ['idle'] },
+  walk:      { clips: ['Walking', 'Walking-3'],               fallback: ['walking', 'idle'] }, // picked once per agent
+  run:       { clips: ['walking'],                            fallback: ['Walking', 'idle'] }, // sprint to a project
+  greet:     { clips: ['Waving'],                             fallback: ['greeting', 'idle'] },
+  dance:     { clips: ['Dancing-1', 'Dancing-2', 'Dancing-3'], fallback: ['idle'] },
+  sitBench:  { clips: ['Sitting-1'],                          fallback: ['idle'] },
+  sitGround: { clips: ['Stand-To-Sit'],                       fallback: ['Sitting-1', 'idle'], once: true },
+  rest:      { clips: ['Resting-1'],                          fallback: ['idle'] },
+};
+export const ARRIVAL_WAVE_DURATION = 4;   // wave at a project landmark, then walk on
 
 // Terrain
 export const TERRAIN_MAX_HEIGHT  = 10;   // maximum hill height in world units

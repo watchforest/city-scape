@@ -7,5 +7,5 @@
  *   'attraction:<projectId>'  — per-project landmark (registered in main.js from projects.csv `model`)
  */
 export function registerAssets(library) {
-  library.register('person:default', '/assets/models/people/simple_character_with_basic_animations/scene.gltf');
+  library.register('person:default', '/assets/models/people/character.glb');
 }

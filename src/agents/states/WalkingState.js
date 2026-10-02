@@ -13,6 +13,10 @@ import { buildStrollWaypoints, buildRouteWaypoints } from '../waypoints.js';
 import { selectNextBehaviour } from '../idleSelection.js';
 
 const ARRIVE_TOLERANCE = 1.5;
+// yuka reports a path finished as soon as the *last* waypoint becomes the target,
+// i.e. up to one waypoint-spacing early; only treat the walk as over once the
+// agent is actually this close to that last waypoint.
+const GOAL_REACHED_DIST = 3;
 
 export class WalkingState extends YUKA.State {
   constructor({ navGraph, pathSegments, onArrivedAtAttraction, getAllAgents } = {}) {
@@ -29,8 +33,9 @@ export class WalkingState extends YUKA.State {
 
   enter(agent) {
     agent.state = 'walking';
-    agent._playClip?.('walking');
-    agent.maxSpeed = agent.walkingToAttraction ? agent._sprintSpeed : agent._baseSpeed;
+    const sprinting = !!agent.walkingToAttraction;
+    agent.playRole(sprinting ? 'run' : 'walk');
+    agent.maxSpeed = sprinting ? agent._sprintSpeed : agent._baseSpeed;
     agent.steering.add(this._follow);
     this._startStroll(agent);
   }
@@ -38,7 +43,7 @@ export class WalkingState extends YUKA.State {
   execute(agent) {
     if (agent.stopped) return;
 
-    if (this._follow.path.finished()) {
+    if (this._follow.path.finished() && this._atGoal(agent)) {
       if (agent.walkingToAttraction) {
         const attraction = agent.walkingToAttraction;
         agent.walkingToAttraction = null;
@@ -52,8 +57,8 @@ export class WalkingState extends YUKA.State {
         agent.stateMachine.changeTo('chatting');
         return;
       }
-      if (behaviour.kind === 'idle') {
-        agent.stateMachine.changeTo('sitting');
+      if (behaviour.kind !== 'walking') {
+        agent.stateMachine.changeTo(behaviour.kind); // sitting | sittingGround | resting | dancing
         return;
       }
       this._startStroll(agent);
@@ -62,6 +67,12 @@ export class WalkingState extends YUKA.State {
 
   exit(agent) {
     agent.steering.remove(this._follow);
+  }
+
+  _atGoal(agent) {
+    const wps = this._follow.path._waypoints;
+    const goal = wps[wps.length - 1];
+    return !goal || Math.hypot(goal.x - agent.position.x, goal.z - agent.position.z) < GOAL_REACHED_DIST;
   }
 
   _startStroll(agent) {
