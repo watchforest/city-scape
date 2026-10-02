@@ -15,7 +15,8 @@ import { LANDMARK_CLEARANCE } from '../config.js';
 const EXCLUSION_RADIUS   = 18;
 const PLAZA_MIN_DEGREE   = 3;
 const PLAZA_RADIUS_BASE  = 24;
-const PLAZA_RADIUS_SCALE = 3;
+const PLAZA_RADIUS_SCALE = 1.5;  // extra radius per connection beyond PLAZA_MIN_DEGREE
+const PLAZA_RADIUS_MAX   = 44;   // cap on the connection-based radius (a big landmark can still enlarge it)
 const CURVE_JITTER       = 0.32;
 
 
@@ -151,7 +152,7 @@ export function buildRoutes(projectNodes, rand, affinityEdges = null, footprints
     const deg = degree.get(p.id) ?? 0;
     const need = (footprints.get(p.id) ?? 0) + LANDMARK_CLEARANCE;
     plazaRadius.set(p.id, deg >= PLAZA_MIN_DEGREE
-      ? Math.max(PLAZA_RADIUS_BASE + (deg - PLAZA_MIN_DEGREE) * PLAZA_RADIUS_SCALE, need)
+      ? Math.max(Math.min(PLAZA_RADIUS_BASE + (deg - PLAZA_MIN_DEGREE) * PLAZA_RADIUS_SCALE, PLAZA_RADIUS_MAX), need)
       : 0);
     exclusionRadius.set(p.id, Math.max(EXCLUSION_RADIUS, need));
   }

@@ -46,7 +46,7 @@ export const PROB_CHAT = 0.10;
 
 // Terrain
 export const TERRAIN_MAX_HEIGHT  = 10;   // maximum hill height in world units
-export const TERRAIN_SCALE       = 10.0;  // noise frequency (higher = more hills, smaller)
+export const TERRAIN_SCALE       = 4.0;   // base noise frequency: hill features across a 540-unit span (higher = more, smaller hills)
 export const TERRAIN_MESA_STEPS  = 4;    // number of quantization steps (0 = smooth, 4 = mesa-like)
 export const TERRAIN_MESA_BLEND  = 0.55; // 0 = fully smooth, 1 = fully stepped
 

@@ -17,68 +17,51 @@ import { mulberry32 } from '@/utils/prng.js';
 
 // ── Value-noise grid ──────────────────────────────────────────────────────────
 
-const GRID = 12;
+// Periodic lattice of random values; noise coordinates are in lattice cells and
+// wrap, so any frequency/octave works without running off the table.
+const GRID = 16;
 
-const _rand = mulberry32(SEED ^ 0xdeadbeef);
-const _table = new Float32Array((GRID + 1) * (GRID + 1));
-for (let i = 0; i < _table.length; i++) _table[i] = _rand() * 2 - 1;
+// World distance that TERRAIN_SCALE / ground-variation frequencies are measured
+// over, so hill size is the same in a small park and a large one.
+const NOISE_WORLD = 540;
+
+function _makeTable(seed) {
+  const rand = mulberry32(seed);
+  const t = new Float32Array(GRID * GRID);
+  for (let i = 0; i < t.length; i++) t[i] = rand() * 2 - 1;
+  return t;
+}
+
+const _table = _makeTable(SEED ^ 0xdeadbeef);
 
 function _smoothstep(t) { return t * t * (3 - 2 * t); }
 function _clamp01(t)    { return t < 0 ? 0 : t > 1 ? 1 : t; }
+function _wrap(i)       { return ((i % GRID) + GRID) % GRID; }
 
-function _valueNoise(nx, ny) {
-  const ix = Math.floor(nx * GRID);
-  const iy = Math.floor(ny * GRID);
-  const fx = nx * GRID - ix;
-  const fy = ny * GRID - iy;
-  const sx = _smoothstep(fx);
-  const sy = _smoothstep(fy);
-  const x0 = Math.max(0, Math.min(GRID, ix));
-  const x1 = Math.max(0, Math.min(GRID, ix + 1));
-  const y0 = Math.max(0, Math.min(GRID, iy));
-  const y1 = Math.max(0, Math.min(GRID, iy + 1));
-  const v00 = _table[y0 * (GRID + 1) + x0];
-  const v10 = _table[y0 * (GRID + 1) + x1];
-  const v01 = _table[y1 * (GRID + 1) + x0];
-  const v11 = _table[y1 * (GRID + 1) + x1];
+/** Smooth value noise in [-1, 1]; (x, y) in lattice cells, periodic every GRID cells. */
+function _noise(table, x, y) {
+  const ix = Math.floor(x), iy = Math.floor(y);
+  const sx = _smoothstep(x - ix), sy = _smoothstep(y - iy);
+  const x0 = _wrap(ix), x1 = _wrap(ix + 1), y0 = _wrap(iy), y1 = _wrap(iy + 1);
+  const v00 = table[y0 * GRID + x0], v10 = table[y0 * GRID + x1];
+  const v01 = table[y1 * GRID + x0], v11 = table[y1 * GRID + x1];
   return v00 + (v10 - v00) * sx + (v01 - v00) * sy + (v00 - v10 - v01 + v11) * sx * sy;
 }
 
 // ── Secondary noise for ground color variation ────────────────────────────────
 
-const _rand2  = mulberry32(SEED ^ 0xcafebabe);
-const _table2 = new Float32Array((GRID + 1) * (GRID + 1));
-for (let i = 0; i < _table2.length; i++) _table2[i] = _rand2() * 2 - 1;
-
-function _valueNoise2(nx, ny) {
-  const ix = Math.floor(nx * GRID);
-  const iy = Math.floor(ny * GRID);
-  const fx = nx * GRID - ix;
-  const fy = ny * GRID - iy;
-  const sx = _smoothstep(fx);
-  const sy = _smoothstep(fy);
-  const x0 = Math.max(0, Math.min(GRID, ix));
-  const x1 = Math.max(0, Math.min(GRID, ix + 1));
-  const y0 = Math.max(0, Math.min(GRID, iy));
-  const y1 = Math.max(0, Math.min(GRID, iy + 1));
-  const v00 = _table2[y0 * (GRID + 1) + x0];
-  const v10 = _table2[y0 * (GRID + 1) + x1];
-  const v01 = _table2[y1 * (GRID + 1) + x0];
-  const v11 = _table2[y1 * (GRID + 1) + x1];
-  return v00 + (v10 - v00) * sx + (v01 - v00) * sy + (v00 - v10 - v01 + v11) * sx * sy;
-}
+const _table2 = _makeTable(SEED ^ 0xcafebabe);
 
 /**
  * Returns a variation value in [-1, 1] at (u, v), independent of height noise.
  * Used to drive ground color patches.
  */
 export function getGroundVariation(u, v) {
-  const b = getParkBounds();
-  const nx = (u - b[0]) / (b[2] - b[0]);
-  const ny = (v - b[1]) / (b[3] - b[1]);
+  const nx = u / NOISE_WORLD;
+  const ny = v / NOISE_WORLD;
   let n = 0;
-  n += _valueNoise2(nx * 2.5,       ny * 2.5)       * 1.0;
-  n += _valueNoise2(nx * 5.0 + 1.3, ny * 5.0 + 2.7) * 0.5;
+  n += _noise(_table2, nx * 2.5,       ny * 2.5)       * 1.0;
+  n += _noise(_table2, nx * 5.0 + 1.3, ny * 5.0 + 2.7) * 0.5;
   return _clamp01((n / 1.5 + 1) / 2); // remap to [0,1]
 }
 
@@ -141,14 +124,14 @@ function _sampleMask(u, v) {
 export function getTerrainHeight(u, v) {
   const b = getParkBounds();
   const parkW = b[2] - b[0], parkH = b[3] - b[1];
-  const nx = (u - b[0]) / parkW;
-  const ny = (v - b[1]) / parkH;
+  const nx = u / NOISE_WORLD;
+  const ny = v / NOISE_WORLD;
 
   // Multi-octave noise
   let h = 0;
-  h += _valueNoise(nx * TERRAIN_SCALE,           ny * TERRAIN_SCALE)           * 1.00;
-  h += _valueNoise(nx * TERRAIN_SCALE * 2 + 3.1, ny * TERRAIN_SCALE * 2 + 1.7) * 0.45;
-  h += _valueNoise(nx * TERRAIN_SCALE * 4 + 6.3, ny * TERRAIN_SCALE * 4 + 4.1) * 0.20;
+  h += _noise(_table, nx * TERRAIN_SCALE,           ny * TERRAIN_SCALE)           * 1.00;
+  h += _noise(_table, nx * TERRAIN_SCALE * 2 + 3.1, ny * TERRAIN_SCALE * 2 + 1.7) * 0.45;
+  h += _noise(_table, nx * TERRAIN_SCALE * 4 + 6.3, ny * TERRAIN_SCALE * 4 + 4.1) * 0.20;
   h /= 1.65;
 
   // Fold negatives into positives — guarantees hills regardless of noise sign bias
