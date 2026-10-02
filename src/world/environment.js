@@ -25,7 +25,11 @@ const TREE_DENSITY   = 180;  // trees for the reference-size park; scaled by par
 const MAX_TRIES = 80;
 const EDGE_INSET = 4; // trees keep this far in from the park edge so crowns don't overhang the frame
 
-const BENCH_SIDE_CLEAR  = 3.0;  // metres beyond path edge (added to half-width), capped
+const BENCH_SCALE       = 1.4;  // benches are scaled up so a seated character fits them (seat top ≈ 1.7)
+const BENCH_SIDE_CLEAR  = 1.5;  // metres from the path edge to the bench centre (added to half-width); the seat's front edge sits ~0.8 from the path
+const BENCH_PLAZA_GAP   = 2.5;  // distance from a plaza disc's edge to its benches
+const BENCH_FOOTPRINT   = 2.4;  // obstacle radius registered per bench (half its scaled length ≈ 2.45)
+const BENCH_PATH_GAP    = 1.0;  // a bench's centre must be at least this far outside any path surface
 const LAMP_SIDE_CLEAR   = 3.0;
 const BENCH_SPACING     = 40;   // arc-length metres between benches
 const LAMP_SPACING      = 28;   // arc-length metres between lamps
@@ -198,7 +202,7 @@ function addBench(batches, x, z, facingAngle) {
   const benchRoot  = new THREE.Matrix4().compose(
     new THREE.Vector3(x, gy, z),
     benchRootQ,
-    new THREE.Vector3(1, 1, 1)
+    new THREE.Vector3(BENCH_SCALE, BENCH_SCALE, BENCH_SCALE) // scales the parts' offsets and sizes too
   );
 
   // Each part: local position → transform by benchRoot
@@ -266,8 +270,11 @@ function _sampleAlongPaths(pathSegments, spacing, side, clearance) {
         const cx = bx + dx * t;
         const cy = bz + dy * t;
 
-        // Offset = half path width + clearance. Width defaults to 8 (single path).
-        const offset = 4 + clearance;
+        // Offset = half the path's actual width here + clearance. Merged ribbons are much wider
+        // than the default 8, so a fixed half-width would put props inside the path (and they'd
+        // be rejected). Width defaults to 8 (single path).
+        const halfWidth = (pts[i].width ?? 8) / 2;
+        const offset = halfWidth + clearance;
 
         // Tangent + perpendicular
         const tx = dx / len, ty = dy / len;
@@ -289,6 +296,21 @@ function _sampleAlongPaths(pathSegments, spacing, side, clearance) {
     }
   }
   return results;
+}
+
+/**
+ * True if (x, z) is at least `gap` outside every path ribbon, using each ribbon sample's
+ * actual width (pathSegments' pts carry `.width`; default 8).
+ */
+function _clearOfPaths(x, z, pathSegments, gap) {
+  for (const { pts } of pathSegments) {
+    for (const p of pts) {
+      const px = p.u ?? p.x ?? 0, pz = p.v ?? p.y ?? 0;
+      const reach = (p.width ?? 8) / 2 + gap;
+      if ((x - px) ** 2 + (z - pz) ** 2 < reach * reach) return false;
+    }
+  }
+  return true;
 }
 
 // ── Random clear placement ────────────────────────────────────────────────────
@@ -435,9 +457,11 @@ export function buildEnvironment(scene, projectNodes, pathGraph, rand, pathSegme
   // ── Benches (right side of path) ────────────────────────────────────────
   const benchPoints = _sampleAlongPaths(segs, BENCH_SPACING, 1, BENCH_SIDE_CLEAR);
   for (const { x, z, facingAngle } of benchPoints) {
-    if (isOccupied(x, z, 2)) continue;
+    // Check against the real path widths, not the 2-unit-cell path grid: that grid reaches ~2
+    // units past the path edge, which would push benches away from it.
+    if (isOccupied(x, z, 2, true) || !_clearOfPaths(x, z, segs, BENCH_PATH_GAP)) continue;
     addBench(benchBatches, x, z, facingAngle);
-    registerCircle(x, z, 1.5);
+    registerCircle(x, z, BENCH_FOOTPRINT);
     registerBench(x, z, facingAngle);
   }
 
@@ -455,7 +479,7 @@ export function buildEnvironment(scene, projectNodes, pathGraph, rand, pathSegme
       const r = plazaRadius.get(p.id);
       if (!r) continue;
       const cx = p.layoutU, cz = p.layoutV;
-      const edgeR = r + 5; // just outside the plaza disc edge
+      const edgeR = r + BENCH_PLAZA_GAP; // just outside the plaza disc edge
       const circumference = 2 * Math.PI * edgeR;
       const lampCount  = Math.max(2, Math.floor(circumference / LAMP_SPACING));
       const benchCount = Math.max(1, Math.floor(circumference / BENCH_SPACING));
@@ -472,10 +496,10 @@ export function buildEnvironment(scene, projectNodes, pathGraph, rand, pathSegme
         const angle = (i / benchCount) * Math.PI * 2 + Math.PI / benchCount; // offset from lamps
         const x = cx + Math.cos(angle) * edgeR;
         const z = cz + Math.sin(angle) * edgeR;
-        if (isOccupied(x, z, 2)) continue;
+        if (isOccupied(x, z, 2, true) || !_clearOfPaths(x, z, segs, BENCH_PATH_GAP)) continue;
         const facingAngle = Math.atan2(cx - x, cz - z); // face toward plaza centre
         addBench(benchBatches, x, z, facingAngle);
-        registerCircle(x, z, 1.5);
+        registerCircle(x, z, BENCH_FOOTPRINT);
         registerBench(x, z, facingAngle);
       }
     }

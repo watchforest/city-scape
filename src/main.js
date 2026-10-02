@@ -98,7 +98,7 @@ async function init() {
   for (const mesh of pathMeshes) scene.add(mesh);
 
   // ── Environment ───────────────────────────────────────────────────────────
-  const { lampHeadMat, lampHaloMat } = buildEnvironment(scene, projectNodes, navGraph, rand, pathSegments, plazaRadius, lakePos);
+  const { lampHeadMat, lampHaloMat } = buildEnvironment(scene, projectNodes, navGraph, rand, renderedSegments, plazaRadius, lakePos);
   buildGround(scene, rand);
   buildWater(scene, getTerrainHeight);
   buildGrass(scene, rand);
