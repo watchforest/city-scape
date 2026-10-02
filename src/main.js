@@ -1,4 +1,7 @@
-import { SEED } from './config.js';
+import {
+  SEED, CAM_FRAME_PERSON, CAM_FRAME_ARRIVAL, CAM_FRAME_PERSON_FROM_LIST,
+  CAM_FRAME_LANDMARK_PER_RADIUS, CAM_FRAME_LANDMARK_MIN,
+} from './config.js';
 import { mulberry32 } from './utils/prng.js';
 import { buildProjectEdges } from './layout/projectLayout.js';
 import { buildNavMesh } from './world/NavMesh.js';
@@ -108,7 +111,7 @@ async function init() {
     scene, navGraph, personNodes, attractions, assetLibrary, pathSegments,
     (agent, attraction) => {
       showProjectOverlay(attraction, personNodes, _releaseActive);
-      camController.zoomTo(agent.mesh.position, 4.5);
+      camController.zoomTo(agent.mesh.position, CAM_FRAME_ARRIVAL);
     }
   );
   agentController.setRand(rand);
@@ -144,13 +147,16 @@ async function init() {
       if (activeAgent && activeAgent !== agent) agentController.resumeAgent(activeAgent);
       activeAgent = agent;
       agentController.greetAgent(agent);
-      camController.zoomTo(agent.mesh.position, 8);
+      camController.zoomTo(agent.mesh.position, CAM_FRAME_PERSON);
       showPersonBubble(agent, attractions, _releaseActive);
     },
     (attraction) => {
       hideBubble();
       showProjectOverlay(attraction, personNodes, () => camController.zoomOut());
-      camController.zoomTo({ x: attraction.displayU, y: 0, z: attraction.displayV }, 3.5);
+      camController.zoomTo(
+        { x: attraction.displayU, y: 0, z: attraction.displayV },
+        Math.max(CAM_FRAME_LANDMARK_MIN, attraction.footprintRadius * CAM_FRAME_LANDMARK_PER_RADIUS)
+      );
     }
   );
 
@@ -195,7 +201,7 @@ async function init() {
   function _selectAgent(agent) {
     activeAgent = agent;
     agentController.greetAgent(agent);
-    camController.zoomTo(agent.mesh.position, 3.5);
+    camController.zoomTo(agent.mesh.position, CAM_FRAME_PERSON_FROM_LIST);
     showPersonBubble(agent, attractions, _releaseActive);
   }
 }

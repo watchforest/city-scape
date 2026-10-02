@@ -25,6 +25,12 @@ export function createCamera(renderer) {
   controls.maxPolarAngle = Math.PI / 2.4;
   controls.target.set(0, 0, 0);
 
+  // Zoom toward the point under the cursor instead of the screen centre.
+  controls.zoomToCursor = true;
+  // Keep the camera from diving into the ground or drifting out of sight.
+  controls.minDistance = 25;
+  controls.maxDistance = dist * 1.6;
+
   window.addEventListener('resize', () => {
     cam.aspect = window.innerWidth / window.innerHeight;
     cam.updateProjectionMatrix();

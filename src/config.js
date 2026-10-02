@@ -3,6 +3,16 @@
 export const SEED = Number(new URLSearchParams(location.search).get('seed') ?? 42);
 
 export const CAM_DIST     = 400;   // for the reference-size park; scaled with the park
+
+// Camera framing distances when a selection is focused (absolute world units, so
+// they don't depend on how far out the user was when they clicked). These match
+// the old "400 / zoom level" values at the default view.
+export const CAM_FRAME_PERSON    = 50;   // click an agent
+export const CAM_FRAME_ARRIVAL   = 90;   // agent arrives at a project (overlay opens)
+export const CAM_FRAME_PERSON_FROM_LIST = 115; // pick a team member from the overlay
+export const CAM_FRAME_FOLLOW    = 90;   // following a walking agent
+export const CAM_FRAME_LANDMARK_PER_RADIUS = 8; // landmark: distance = footprint radius × this …
+export const CAM_FRAME_LANDMARK_MIN        = 70; // … but never closer than this
 export const ISO_ELEVATION = Math.atan(1 / Math.sqrt(2)); // 35.264°
 
 // The park is sized from the landmark layout at startup (src/world/parkBounds.js).

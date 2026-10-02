@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { CAM_FRAME_FOLLOW } from '@/config.js';
 
 /**
  * Camera controller that physically moves the camera (dolly), rather than
@@ -14,7 +15,6 @@ import * as THREE from 'three';
  *   'follow'  — camera travels with a moving object each frame
  *   'zoomout' — animating back to the saved free position
  */
-const FOLLOW_ZOOM = 4.5;   // follow distance = saved distance / FOLLOW_ZOOM
 const FOLLOW_RATE = 4;     // exponential smoothing rate (1/s)
 
 export class CameraController {
@@ -24,6 +24,7 @@ export class CameraController {
 
     this._mode = 'free';
     this._followTarget = null;
+    this._followDist = 0;
 
     this._dir = new THREE.Vector3(0, 1, 1).normalize(); // target -> camera
     this._savedTarget = controls.target.clone();
@@ -68,21 +69,27 @@ export class CameraController {
     this._cam.lookAt(this._curTarget);
   }
 
-  /** Fly the camera to a world position. zoomLevel = how many times closer than the saved free view. */
-  zoomTo(worldPos, zoomLevel = 8) {
+  /**
+   * Fly the camera to a world position and frame it from `distance` world units.
+   * The distance is absolute (not relative to the current zoom), but never
+   * farther than the view the user started from, so clicking while already
+   * zoomed in doesn't pull the camera back out.
+   */
+  zoomTo(worldPos, distance) {
     this._beginInteraction();
     this._followTarget = null;
     this._startAnim(
       new THREE.Vector3(worldPos.x, 0, worldPos.z),
-      this._savedDist / zoomLevel,
+      Math.min(distance, this._savedDist),
       'zoomin'
     );
   }
 
   /** Start following a mesh (person walking); the camera travels with it. */
-  follow(mesh) {
+  follow(mesh, distance = CAM_FRAME_FOLLOW) {
     this._beginInteraction();
     this._followTarget = mesh;
+    this._followDist = Math.min(distance, this._savedDist);
     this._mode = 'follow';
   }
 
@@ -107,7 +114,7 @@ export class CameraController {
       const k = Math.min(1, dt * FOLLOW_RATE);
       this._curTarget.x += (tp.x - this._curTarget.x) * k;
       this._curTarget.z += (tp.z - this._curTarget.z) * k;
-      this._curDist += (this._savedDist / FOLLOW_ZOOM - this._curDist) * Math.min(1, dt * 3);
+      this._curDist += (this._followDist - this._curDist) * Math.min(1, dt * 3);
       this._apply();
       return;
     }
