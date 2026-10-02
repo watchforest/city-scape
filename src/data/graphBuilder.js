@@ -9,24 +9,21 @@
  */
 
 /**
- * districtNodes — DEFAULT_DISTRICTS array, used to assign x/y to each person
- *                 based on their cluster field.
+ * @param {object[]} people
+ * @param {object[]} projects   — laid-out ProjectNode[] with layoutU/layoutV
+ * @param {function} rand
  */
-export function buildGraph(people, projects, districtNodes = [], rand = Math.random) {
+export function buildGraph(people, projects, rand = Math.random) {
   if (!people.length) return { nodes: [], edges: [] };
 
-  // Map cluster -> centroid position
-  const clusterPos = new Map();
-  for (const d of districtNodes) {
-    if (!clusterPos.has(d.cluster)) clusterPos.set(d.cluster, { x: d.x, y: d.y });
-  }
-
-  // Build a map: personId -> Set of projectIds
+  // Build a map: personId -> Set of projectIds, and projectId -> {layoutU, layoutV}
   const membership = new Map();
+  const projectPos = new Map();
   for (const person of people) {
     membership.set(person.id, new Set());
   }
   for (const proj of projects) {
+    projectPos.set(proj.id, { u: proj.layoutU, v: proj.layoutV });
     const members = (proj.members ?? '').split(';').map(s => s.trim()).filter(Boolean);
     for (const id of members) {
       if (!membership.has(id)) membership.set(id, new Set());
@@ -51,20 +48,29 @@ export function buildGraph(people, projects, districtNodes = [], rand = Math.ran
     }
   }
 
-  // Enrich people nodes with world positions — spread within their district
-  // so individual people are visibly distinct in the network layer.
-  const clusterCount = new Map();
+  // Enrich people nodes with world positions — spawn near the centroid of the
+  // project(s) they belong to, spread on a small circle so individuals are
+  // visibly distinct. People with no project fall back to a random park position.
   const nodes = people.map(p => {
-    const pos = clusterPos.get(p.cluster) ?? { x: 0, y: 0 };
-    const count = clusterCount.get(p.cluster) ?? 0;
-    clusterCount.set(p.cluster, count + 1);
-    // Arrange in a small circle around the cluster centroid
-    const angle = (count / 5) * Math.PI * 2 + rand() * 0.5;
+    const projIds = [...(membership.get(p.id) ?? [])];
+    const positions = projIds.map(id => projectPos.get(id)).filter(Boolean);
+
+    let centerU = 0, centerV = 0;
+    if (positions.length > 0) {
+      for (const pos of positions) { centerU += pos.u; centerV += pos.v; }
+      centerU /= positions.length;
+      centerV /= positions.length;
+    } else {
+      centerU = (rand() - 0.5) * 400;
+      centerV = (rand() - 0.5) * 400;
+    }
+
+    const angle  = rand() * Math.PI * 2;
     const radius = 12 + rand() * 8;
     return {
       ...p,
-      x: pos.x + Math.cos(angle) * radius,
-      y: pos.y + Math.sin(angle) * radius,
+      u: centerU + Math.cos(angle) * radius,
+      v: centerV + Math.sin(angle) * radius,
     };
   });
 

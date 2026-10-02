@@ -1,107 +1,139 @@
-import { SEED, PARK_BOUNDS } from './config.js';
+import { SEED } from './config.js';
 import { mulberry32 } from './utils/prng.js';
-import { layoutProjectsByAffinity, clusterCentroidsFromProjects } from './layout/projectAffinityLayout.js';
-import { buildPathNetwork } from './layout/pathNetwork.js';
-import { registerCircle, registry } from './world/obstacleRegistry.js';
+import { buildProjectEdges } from './layout/projectLayout.js';
+import { buildNavMesh } from './world/NavMesh.js';
+import { resolveModelUrl } from './assets/modelUrl.js';
+import { fitParkToNodes, getParkBounds } from './world/parkBounds.js';
+import { computeFootprints } from './attractions/landmarkFit.js';
+import { buildAttractionMeshes, animateAttractions } from './attractions/AttractionPlacer.js';
+import { registerCircle, rasterizePathMeshes, registry } from './world/obstacleRegistry.js';
 import { loadData } from './data/loader.js';
 import { buildGraph } from './data/graphBuilder.js';
 import { createScene } from './world/scene.js';
 import { createCamera } from './world/camera.js';
 import { buildGround } from './world/ground.js';
-import { buildEnvironment } from './world/environment.js';
+import { buildEnvironment, findLakePosition } from './world/environment.js';
 import { buildClouds, updateClouds } from './world/clouds.js';
+import { buildGrass, updateGrass } from './world/grass.js';
 import { DayCycle } from './world/dayCycle.js';
-import { placeAttractions, animateAttractions } from './world/attractions.js';
 import { AssetLibrary } from './assets/AssetLibrary.js';
 import { registerAssets } from './assets/registry.js';
-import { AgentManager } from './agents/AgentManager.js';
+import { AgentController } from './agents/AgentController.js';
 import { createPicker } from './interaction/picker.js';
 import { CameraController } from './interaction/cameraController.js';
 import { initOverlay, showProjectOverlay, hideProjectOverlay } from './ui/overlay.js';
 import { initSpeechBubble, showPersonBubble, hideBubble, updateBubblePosition } from './ui/speechBubble.js';
 import { initSleepZs, updateSleepZs } from './ui/sleepZs.js';
+import { initChatBubbles, updateChatBubbles } from './ui/chatBubbles.js';
 
 async function init() {
   const rand = mulberry32(SEED);
 
   // ── Data ──────────────────────────────────────────────────────────────────
-  const { people, projects } = await loadData();
+  const { people, projects, quotes } = await loadData();
 
-  // ── Layout — projects by affinity ─────────────────────────────────────────
-  const projectNodes = layoutProjectsByAffinity(projects, people, PARK_BOUNDS, rand);
+  // ── Layout — baked offline via `npm run bake-layout` (see scripts/bakeLayout.mjs) ──
+  const layoutRes = await fetch('/assets/data/layout.json');
+  const layout = layoutRes.ok ? await layoutRes.json() : { projects: [] };
+  const layoutById = new Map(layout.projects.map(p => [p.id, p]));
+  const projectNodes = projects.map(proj => ({
+    ...proj,
+    layoutU: layoutById.get(proj.id)?.layoutU ?? 0,
+    layoutV: layoutById.get(proj.id)?.layoutV ?? 0,
+  }));
 
-  // ── Register landmark footprints before building paths/environment ─────────
-  for (const p of projectNodes) registerCircle(p.x, p.y, 16);
+  // Project node footprints are covered by the rasterized path grid (plaza discs
+  // are included in pathMeshes). No need to register circles here.
 
-  // ── Path network ──────────────────────────────────────────────────────────
-  const { pathMeshes, pathGraph, pathSegments } = buildPathNetwork(projectNodes, rand);
+  // ── Assets (before the spatial layer: landmark sizes drive plaza sizes) ──
+  const assetLibrary = new AssetLibrary();
+  registerAssets(assetLibrary);
+  // Per-project custom landmark models (optional `model` column in projects.csv).
+  // Empty or unloadable paths fall back to the default pavilion.
+  // Per-person character models (optional `model` column in people.csv).
+  for (const person of people) {
+    const url = resolveModelUrl(person.model);
+    if (url) assetLibrary.register(`person:${person.id}`, url);
+  }
+  for (const proj of projects) {
+    const url = resolveModelUrl(proj.model);
+    if (url) assetLibrary.register(`attraction:${proj.id}`, url);
+  }
+  await assetLibrary.preloadAll();
 
-  // Register path waypoints so trees/grass avoid them
-  for (const n of pathGraph.nodes) registerCircle(n.x, n.y, 4);
+  // ── Spatial layer — paths, nav graph, attraction instances ───────────────
+  const affinityEdges = buildProjectEdges(projects);
 
-  // ── Cluster centroids from project layout (for graphBuilder) ───────────────
-  const clusterCentroids = clusterCentroidsFromProjects(projectNodes);
+  // Size the park around the layout (re-centres the nodes on the origin). Must
+  // run before anything that reads the park bounds: lake, terrain, environment…
+  const footprints = computeFootprints(projectNodes, assetLibrary);
+  fitParkToNodes(projectNodes, footprints);
 
-  // ── People graph (positions derived from cluster centroids) ───────────────
-  const { nodes: personNodes, edges: personEdges } = buildGraph(people, projects, clusterCentroids, rand);
+  // Find lake position before baking the terrain mask so the lake bed is flat
+  const lakePos = findLakePosition(projectNodes, null);
+
+  const { pathMeshes, pathSegments, renderedSegments, navGraph, attractions, plazaRadius } = buildNavMesh(projectNodes, rand, affinityEdges, lakePos, footprints);
+
+  // Rasterize all path meshes into occupancy grid — exact visual surface
+  // (includes plaza discs, ribbon paths, junction discs)
+  rasterizePathMeshes(pathMeshes, getParkBounds(), 2, 0);
+
+  // ── People graph ──────────────────────────────────────────────────────────
+  const { nodes: personNodes } = buildGraph(people, projectNodes, rand);
 
   // ── Scene + camera ────────────────────────────────────────────────────────
   const { scene, renderer } = createScene();
   const { cam, controls }   = createCamera(renderer);
   const camController       = new CameraController(cam, controls);
 
-  // Add path meshes to scene
   for (const mesh of pathMeshes) scene.add(mesh);
 
-  // ── Assets ────────────────────────────────────────────────────────────────
-  const assetLibrary = new AssetLibrary();
-  registerAssets(assetLibrary);
-  await assetLibrary.preloadAll();
-
-  // ── Environment (trees, benches, lampposts, lake) — consumes rand first ──
-  const { lampLights } = buildEnvironment(scene, projectNodes, pathGraph, rand, pathSegments);
-  buildGround(scene, rand);            // patches after environment, registry excludes lake
+  // ── Environment ───────────────────────────────────────────────────────────
+  const { lampHeadMat, lampHaloMat } = buildEnvironment(scene, projectNodes, navGraph, rand, pathSegments, plazaRadius, lakePos);
+  buildGround(scene, rand);
+  buildGrass(scene, rand);
   buildClouds(scene, rand);
 
   // ── Day/night cycle ───────────────────────────────────────────────────────
   const dayCycle = new DayCycle(scene);
-  dayCycle.setLampLights(lampLights);
+  dayCycle.setLampMaterials(lampHeadMat, lampHaloMat);
 
   // ── Attractions ───────────────────────────────────────────────────────────
-  const attractionMeshes = placeAttractions(scene, projectNodes, assetLibrary);
+  const attractionMeshes = buildAttractionMeshes(scene, attractions, assetLibrary);
 
   // ── Agents ────────────────────────────────────────────────────────────────
   let activeAgent = null;
 
-  const agentManager = new AgentManager(
-    scene, pathGraph, personNodes, projectNodes, assetLibrary,
-    (agent, project) => {
-      showProjectOverlay(project, personNodes, _releaseActive);
+  const agentController = new AgentController(
+    scene, navGraph, personNodes, attractions, assetLibrary, pathSegments,
+    (agent, attraction) => {
+      showProjectOverlay(attraction, personNodes, _releaseActive);
       camController.zoomTo(agent.mesh.position, 4.5);
     }
   );
-  agentManager.setRand(rand);
-  agentManager.setCamera(cam);
-  agentManager.setDismissCallback(() => { camController.zoomOut(); activeAgent = null; });
+  agentController.setRand(rand);
+  agentController.setCamera(cam);
+  agentController.setDismissCallback(() => { camController.zoomOut(); activeAgent = null; });
 
   // ── UI ────────────────────────────────────────────────────────────────────
   initOverlay(person => {
-    const agent = agentManager.getAgents().find(a => a.person.id === person.id);
+    const agent = agentController.getAgents().find(a => a.person.id === person.id);
     if (!agent) return;
     hideProjectOverlay();
     _selectAgent(agent);
   });
 
   initSleepZs(scene);
+  initChatBubbles(scene, quotes);
 
-  initSpeechBubble(renderer, cam, (agent, project) => {
+  initSpeechBubble(renderer, cam, (agent, attraction) => {
     activeAgent = agent;
     camController.follow(agent.mesh);
-    agentManager.walkToProject(agent, project);
+    agentController.walkToProject(agent, attraction);
   });
 
   function _releaseActive() {
-    if (activeAgent) { agentManager.resumeAgent(activeAgent); activeAgent = null; }
+    if (activeAgent) { agentController.resumeAgent(activeAgent); activeAgent = null; }
     camController.zoomOut();
   }
 
@@ -109,31 +141,31 @@ async function init() {
   const picker = createPicker(
     renderer, cam,
     (agent) => {
-      if (activeAgent && activeAgent !== agent) agentManager.resumeAgent(activeAgent);
+      if (activeAgent && activeAgent !== agent) agentController.resumeAgent(activeAgent);
       activeAgent = agent;
-      agentManager.greetAgent(agent);
+      agentController.greetAgent(agent);
       camController.zoomTo(agent.mesh.position, 8);
-      showPersonBubble(agent, projectNodes, _releaseActive);
+      showPersonBubble(agent, attractions, _releaseActive);
     },
-    (project) => {
+    (attraction) => {
       hideBubble();
-      showProjectOverlay(project, personNodes, () => camController.zoomOut());
-      camController.zoomTo({ x: project.x, y: 0, z: project.y }, 3.5);
+      showProjectOverlay(attraction, personNodes, () => camController.zoomOut());
+      camController.zoomTo({ x: attraction.displayU, y: 0, z: attraction.displayV }, 3.5);
     }
   );
 
-  picker.registerAgents(agentManager.getMeshes());
+  picker.registerAgents(agentController.getMeshes());
   picker.registerProjects(attractionMeshes.map(am => am.group));
 
   // ── Keyboard shortcuts ────────────────────────────────────────────────────
   window.addEventListener('keydown', e => {
     if (e.key === 't' || e.key === 'T') {
-      dayCycle.cyclePreset(); // cycle dawn→day→dusk→night
+      dayCycle.cyclePreset();
     }
     if (e.key === 'Escape') {
       hideBubble();
       hideProjectOverlay();
-      if (activeAgent) { agentManager.resumeAgent(activeAgent); activeAgent = null; }
+      if (activeAgent) { agentController.resumeAgent(activeAgent); activeAgent = null; }
       camController.zoomOut();
     }
   });
@@ -148,9 +180,11 @@ async function init() {
 
     controls.update();
     camController.update(dt);
-    agentManager.update(dt);
-    updateSleepZs(agentManager.getAgents(), dt);
+    agentController.update(dt);
+    updateSleepZs(agentController.getAgents(), dt);
+    updateChatBubbles(agentController.getAgents(), dt);
     animateAttractions(attractionMeshes, dt);
+    updateGrass(dt);
     updateClouds(dt);
     dayCycle.update();
     updateBubblePosition();
@@ -160,9 +194,9 @@ async function init() {
 
   function _selectAgent(agent) {
     activeAgent = agent;
-    agentManager.greetAgent(agent);
+    agentController.greetAgent(agent);
     camController.zoomTo(agent.mesh.position, 3.5);
-    showPersonBubble(agent, projectNodes, _releaseActive);
+    showPersonBubble(agent, attractions, _releaseActive);
   }
 }
 

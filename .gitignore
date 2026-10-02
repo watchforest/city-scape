@@ -1,2 +1,21 @@
 /CLAUDE.md
 /PLAN.md
+.playwright-mcp/
+screenshot_archive/
+
+# macOS
+.DS_Store
+**/.DS_Store
+
+# Node
+node_modules/
+npm-debug.log*
+
+# Vite build output
+dist/
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo

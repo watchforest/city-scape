@@ -1,67 +1,96 @@
 import * as THREE from 'three';
-import { FRUSTUM_SIZE } from '@/config.js';
 
 /**
- * Smooth isometric camera controller.
- * Wraps OrbitControls — handles zoom-in on selection and pan-follow during walk.
+ * Camera controller that physically moves the camera (dolly), rather than
+ * narrowing the FOV. Wraps OrbitControls.
+ *
+ * The camera is described by (target, distance) along a fixed view direction
+ * captured when an interaction starts, so the user's chosen orbit angle is kept.
  *
  * Modes:
  *   'free'    — normal OrbitControls
- *   'zoomin'  — animating toward a target position
- *   'follow'  — tracking a moving object each frame
- *   'zoomout' — animating back to saved free position
+ *   'zoomin'  — animating target + distance toward a selection
+ *   'idle'    — arrived, holding on the selection
+ *   'follow'  — camera travels with a moving object each frame
+ *   'zoomout' — animating back to the saved free position
  */
+const FOLLOW_ZOOM = 4.5;   // follow distance = saved distance / FOLLOW_ZOOM
+const FOLLOW_RATE = 4;     // exponential smoothing rate (1/s)
+
 export class CameraController {
   constructor(cam, controls) {
     this._cam = cam;
     this._controls = controls;
 
     this._mode = 'free';
-    this._followTarget = null; // { mesh } — object to track
+    this._followTarget = null;
 
-    // Saved state to restore after interaction
-    this._savedZoom   = cam.zoom;
+    this._dir = new THREE.Vector3(0, 1, 1).normalize(); // target -> camera
     this._savedTarget = controls.target.clone();
+    this._savedDist   = cam.position.distanceTo(controls.target);
 
-    // Animation state
-    this._targetZoom   = cam.zoom;
-    this._targetLookAt = controls.target.clone();
+    this._curTarget = controls.target.clone();
+    this._curDist   = this._savedDist;
+
+    this._fromTarget = this._curTarget.clone();
+    this._fromDist   = this._curDist;
+    this._toTarget   = this._curTarget.clone();
+    this._toDist     = this._curDist;
     this._animT        = 0;
-    this._animDuration = 0.6; // seconds
-    this._fromZoom     = cam.zoom;
-    this._fromLookAt   = controls.target.clone();
+    this._animDuration = 0.8;
   }
 
-  /** Smoothly zoom in and center on a world position. */
-  zoomTo(worldPos, zoomLevel = 8) {
-    this._savedZoom   = this._cam.zoom;
-    this._savedTarget = this._controls.target.clone();
-
-    this._fromZoom   = this._cam.zoom;
-    this._fromLookAt = this._controls.target.clone();
-    this._targetZoom   = zoomLevel;
-    this._targetLookAt = new THREE.Vector3(worldPos.x, 0, worldPos.z);
-    this._animT        = 0;
-    this._mode         = 'zoomin';
+  /** Capture the current free-orbit view so zoomOut can return to it. */
+  _beginInteraction() {
+    this._dir.copy(this._cam.position).sub(this._controls.target);
+    this._curDist = this._dir.length();
+    this._dir.normalize();
+    this._curTarget.copy(this._controls.target);
+    if (this._mode === 'free') {
+      this._savedTarget.copy(this._curTarget);
+      this._savedDist = this._curDist;
+    }
     this._controls.enabled = false;
   }
 
-  /** Start following a mesh (person walking). */
+  _startAnim(target, dist, mode) {
+    this._fromTarget.copy(this._curTarget);
+    this._fromDist = this._curDist;
+    this._toTarget.copy(target);
+    this._toDist = dist;
+    this._animT = 0;
+    this._mode = mode;
+  }
+
+  _apply() {
+    this._controls.target.copy(this._curTarget);
+    this._cam.position.copy(this._curTarget).addScaledVector(this._dir, this._curDist);
+    this._cam.lookAt(this._curTarget);
+  }
+
+  /** Fly the camera to a world position. zoomLevel = how many times closer than the saved free view. */
+  zoomTo(worldPos, zoomLevel = 8) {
+    this._beginInteraction();
+    this._followTarget = null;
+    this._startAnim(
+      new THREE.Vector3(worldPos.x, 0, worldPos.z),
+      this._savedDist / zoomLevel,
+      'zoomin'
+    );
+  }
+
+  /** Start following a mesh (person walking); the camera travels with it. */
   follow(mesh) {
+    this._beginInteraction();
     this._followTarget = mesh;
     this._mode = 'follow';
-    this._controls.enabled = false;
   }
 
-  /** Zoom back out to saved free position. */
+  /** Fly back to the saved free position. */
   zoomOut() {
-    this._fromZoom   = this._cam.zoom;
-    this._fromLookAt = this._controls.target.clone();
-    this._targetZoom   = this._savedZoom;
-    this._targetLookAt = this._savedTarget.clone();
-    this._animT        = 0;
-    this._mode         = 'zoomout';
+    if (this._mode === 'free') return;
     this._followTarget = null;
+    this._startAnim(this._savedTarget, this._savedDist, 'zoomout');
   }
 
   release() {
@@ -75,30 +104,24 @@ export class CameraController {
 
     if (this._mode === 'follow' && this._followTarget) {
       const tp = this._followTarget.position;
-      const current = this._controls.target;
-      // Smooth pan toward target
-      current.x += (tp.x - current.x) * Math.min(1, dt * 4);
-      current.z += (tp.z - current.z) * Math.min(1, dt * 4);
-      this._controls.target.copy(current);
-      this._cam.zoom += (4.5 - this._cam.zoom) * Math.min(1, dt * 3);
-      this._cam.updateProjectionMatrix();
+      const k = Math.min(1, dt * FOLLOW_RATE);
+      this._curTarget.x += (tp.x - this._curTarget.x) * k;
+      this._curTarget.z += (tp.z - this._curTarget.z) * k;
+      this._curDist += (this._savedDist / FOLLOW_ZOOM - this._curDist) * Math.min(1, dt * 3);
+      this._apply();
       return;
     }
 
     if (this._mode === 'zoomin' || this._mode === 'zoomout') {
       this._animT += dt / this._animDuration;
-      const t = Math.min(1, _easeInOut(this._animT));
-
-      this._cam.zoom = this._fromZoom + (this._targetZoom - this._fromZoom) * t;
-      this._controls.target.lerpVectors(this._fromLookAt, this._targetLookAt, t);
-      this._cam.updateProjectionMatrix();
+      const t = _easeInOut(Math.min(1, this._animT));
+      this._curTarget.lerpVectors(this._fromTarget, this._toTarget, t);
+      this._curDist = this._fromDist + (this._toDist - this._fromDist) * t;
+      this._apply();
 
       if (this._animT >= 1) {
-        if (this._mode === 'zoomout') {
-          this.release();
-        } else {
-          this._mode = 'idle';
-        }
+        if (this._mode === 'zoomout') this.release();
+        else this._mode = 'idle';
       }
     }
   }

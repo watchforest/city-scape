@@ -10,6 +10,7 @@
  */
 
 import * as THREE from 'three';
+import { getParkHalf, getParkScale } from './parkBounds.js';
 import { SKY_DAY, SKY_DAWN, SKY_NIGHT } from '@/config.js';
 
 const _skyDay   = new THREE.Color(SKY_DAY);
@@ -39,7 +40,8 @@ export class DayCycle {
     this._overrideHours = null; // null = use real clock
     this._presetIdx = -1;
     this._scene = scene;
-    this._lampLights = [];
+    this._lampHeadMat = null;
+    this._lampHaloMat = null;
 
     this._ambient = new THREE.AmbientLight(0xffffff, 0.3);
     scene.add(this._ambient);
@@ -48,11 +50,14 @@ export class DayCycle {
     this._sun.castShadow = true;
     this._sun.shadow.mapSize.set(2048, 2048);
     this._sun.shadow.camera.near = 1;
-    this._sun.shadow.camera.far  = 600;
-    this._sun.shadow.camera.left   = -250;
-    this._sun.shadow.camera.right  =  250;
-    this._sun.shadow.camera.top    =  250;
-    this._sun.shadow.camera.bottom = -250;
+    // Sun distance and shadow frustum follow the park size.
+    this._parkScale = getParkScale();
+    const shadowHalf = getParkHalf() - 20;
+    this._sun.shadow.camera.far  = 600 * this._parkScale;
+    this._sun.shadow.camera.left   = -shadowHalf;
+    this._sun.shadow.camera.right  =  shadowHalf;
+    this._sun.shadow.camera.top    =  shadowHalf;
+    this._sun.shadow.camera.bottom = -shadowHalf;
     scene.add(this._sun);
 
     this._moon = new THREE.DirectionalLight(0x8899cc, 0.15);
@@ -62,9 +67,10 @@ export class DayCycle {
     this.update();
   }
 
-  /** Register lamp PointLights to be driven by the day cycle. */
-  setLampLights(lights) {
-    this._lampLights = lights;
+  /** Register lamp materials to be driven by the day cycle. */
+  setLampMaterials(headMat, haloMat) {
+    this._lampHeadMat = headMat;
+    this._lampHaloMat = haloMat;
   }
 
   /** Cycle through dawn/day/dusk/night presets (T key). */
@@ -121,9 +127,10 @@ export class DayCycle {
     if (sunVisible) {
       // Arc east (positive x) at dawn → west (negative x) at dusk
       const arcAngle = ((hours - 5) / 14) * Math.PI; // 0 → π
-      const sunY     = Math.sin(arcAngle) * 150 + 10;
-      const sunX     = Math.cos(arcAngle) * -150;
-      this._sun.position.set(sunX, sunY, -80);
+      const s        = this._parkScale;
+      const sunY     = (Math.sin(arcAngle) * 150 + 10) * s;
+      const sunX     = Math.cos(arcAngle) * -150 * s;
+      this._sun.position.set(sunX, sunY, -80 * s);
       this._sun.intensity = 0.3 + sunAbove * 0.9;
 
       // Colour: warm orange at dawn/dusk, white at noon
@@ -138,19 +145,19 @@ export class DayCycle {
     this._moon.visible   = !sunVisible || hours < 7 || hours > 18;
     this._moon.intensity = Math.max(0, 0.15 - sunAbove * 0.12);
 
-    // ── Lamp posts: on when dark, off in full daylight ─────────────────────
-    // Fully on below hour 8 and above hour 18, fade in/out in between
-    let lampIntensity;
+    // ── Lamp posts: emissive glow + ground halo, driven by time of day ────
+    let lampT; // 0 = off (day), 1 = fully on (night)
     if (hours < 7 || hours >= 19) {
-      lampIntensity = 1.8;
+      lampT = 1;
     } else if (hours < 9) {
-      lampIntensity = 1.8 * (1 - (hours - 7) / 2);
+      lampT = 1 - (hours - 7) / 2;
     } else if (hours < 17) {
-      lampIntensity = 0;
+      lampT = 0;
     } else {
-      lampIntensity = 1.8 * ((hours - 17) / 2);
+      lampT = (hours - 17) / 2;
     }
-    for (const l of this._lampLights) l.intensity = lampIntensity;
+    if (this._lampHeadMat) this._lampHeadMat.emissiveIntensity = lampT * 2.0;
+    if (this._lampHaloMat) this._lampHaloMat.opacity           = lampT * 0.9;
 
     // ── CSS variables for UI theming ──────────────────────────────────────
     const isNight = hours < 7 || hours > 19;

@@ -4,185 +4,255 @@
  * Benches and lampposts sample arc-length-evenly along path curves,
  * offset sideways by a fixed distance, and oriented perpendicular to the path.
  * Trees fill the remaining area.
+ *
+ * Trees, benches, and lampposts are rendered via THREE.InstancedMesh through
+ * the InstanceBatch helper so draw-calls scale with object-type count, not
+ * object count.
  */
 
 import * as THREE from 'three';
-import { PARK_BOUNDS, LAKE_COLOR, REED_COLOR } from '@/config.js';
-import { registerEllipse, isOccupied } from './obstacleRegistry.js';
+import { LAKE_COLOR, REED_COLOR } from '@/config.js';
+import { getParkBounds, getParkHalf, getParkAreaScale } from './parkBounds.js';
+import { registerCircle, registerEllipse, isOccupied } from './obstacleRegistry.js';
+import { registerBench } from './benchRegistry.js';
+import { InstanceBatch } from '@/utils/InstanceBatch.js';
+import { getTerrainHeight } from './terrain.js';
+import { TERRAIN_MAX_HEIGHT } from '@/config.js';
 
-const TREE_COUNT     = 180;
-const BENCH_COUNT    = 40;
-const LAMPPOST_COUNT = 35;
+const TREE_DENSITY   = 180;  // trees for the reference-size park; scaled by park area
 
-const PARK_HALF = (PARK_BOUNDS[2] - PARK_BOUNDS[0]) / 2; // derived from config
 const MAX_TRIES = 80;
 
-const BENCH_SIDE_DIST   = 4.0; // metres off path centreline
-const LAMP_SIDE_DIST    = 3.5;
-const BENCH_SPACING     = 22;  // arc-length metres between benches
-const LAMP_SPACING      = 18;  // arc-length metres between lamps
+const BENCH_SIDE_CLEAR  = 3.0;  // metres beyond path edge (added to half-width), capped
+const LAMP_SIDE_CLEAR   = 3.0;
+const BENCH_SPACING     = 40;   // arc-length metres between benches
+const LAMP_SPACING      = 28;   // arc-length metres between lamps
 
-// ── Shapes ────────────────────────────────────────────────────────────────────
+// ── Instancing limits ─────────────────────────────────────────────────────────
 
-function makeConeTree(rand) {
-  const group  = new THREE.Group();
-  const trunkH = 2 + rand() * 3;
-  const crownR = 2.5 + rand() * 1.5;
+const MAX_CONE_TREES   = 300;
+const MAX_ROUND_TREES  = 300;
+const MAX_PINE_LAYER0  = 300;
+const MAX_PINE_LAYER1  = 300;
+const MAX_BENCHES      = 200;
+const MAX_LAMPS        = 200;
 
-  const trunk = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.25, 0.4, trunkH, 5),
-    new THREE.MeshLambertMaterial({ color: 0x5c3a1e })
-  );
-  trunk.position.y = trunkH / 2;
-  trunk.castShadow = true;
-  group.add(trunk);
+// ── Materials (shared across all instances of each type) ──────────────────────
 
-  const crown = new THREE.Mesh(
-    new THREE.ConeGeometry(crownR, crownR * 1.6, Math.floor(6 + rand() * 3)),
-    new THREE.MeshLambertMaterial({ color: 0x2d6a2d })
-  );
-  crown.position.y = trunkH + crownR * 0.7;
-  crown.castShadow = true;
-  group.add(crown);
+const MAT_TRUNK_DARK  = new THREE.MeshLambertMaterial({ color: 0x5c3a1e });
+const MAT_TRUNK_MED   = new THREE.MeshLambertMaterial({ color: 0x5c3a1e });
+const MAT_CROWN_CONE  = new THREE.MeshLambertMaterial({ color: 0x2d6a2d });
+const MAT_CROWN_ROUND = new THREE.MeshLambertMaterial({ color: 0x3a7a3a });
+const MAT_PINE_L0     = new THREE.MeshLambertMaterial({ color: 0x2d6a2d });
+const MAT_PINE_L1     = new THREE.MeshLambertMaterial({ color: 0x246024 });
+const MAT_PLANK       = new THREE.MeshLambertMaterial({ color: 0x8B5e3c });
+const MAT_LEG         = new THREE.MeshLambertMaterial({ color: 0x5c3a1e });
+const MAT_POLE        = new THREE.MeshLambertMaterial({ color: 0x333333 });
+// MeshStandardMaterial so we can drive emissiveIntensity from dayCycle
+const MAT_LAMP_HEAD   = new THREE.MeshStandardMaterial({ color: 0xffffaa, emissive: new THREE.Color(0xffd97a), emissiveIntensity: 0 });
 
-  return group;
+// Radial gradient texture for ground halo — generated once via canvas
+function _makeHaloTexture() {
+  const size = 128;
+  const canvas = document.createElement('canvas');
+  canvas.width = canvas.height = size;
+  const ctx = canvas.getContext('2d');
+  const grad = ctx.createRadialGradient(size/2, size/2, 0, size/2, size/2, size/2);
+  grad.addColorStop(0,   'rgba(255, 220, 100, 0.45)');
+  grad.addColorStop(0.4, 'rgba(255, 200,  60, 0.15)');
+  grad.addColorStop(1,   'rgba(255, 180,   0, 0)');
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, size, size);
+  const tex = new THREE.CanvasTexture(canvas);
+  return tex;
 }
 
-function makeRoundTree(rand) {
-  const group  = new THREE.Group();
-  const trunkH = 1.5 + rand() * 2;
-  const crownR = 3 + rand() * 2;
+const MAT_LAMP_HALO = new THREE.MeshBasicMaterial({
+  map: _makeHaloTexture(),
+  transparent: true,
+  depthWrite: false,
+  blending: THREE.AdditiveBlending,
+  polygonOffset: true,
+  polygonOffsetFactor: -2,
+  polygonOffsetUnits: -2,
+  opacity: 0,
+});
 
-  const trunk = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.2, 0.35, trunkH, 5),
-    new THREE.MeshLambertMaterial({ color: 0x5c3a1e })
-  );
-  trunk.position.y = trunkH / 2;
-  trunk.castShadow = true;
-  group.add(trunk);
+// ── Geometry (unit / canonical — scale applied per-instance via Matrix4) ──────
 
-  const crown = new THREE.Mesh(
-    new THREE.SphereGeometry(crownR, 8, 6),
-    new THREE.MeshLambertMaterial({ color: 0x3a7a3a })
-  );
-  crown.position.y = trunkH + crownR * 0.75;
-  crown.castShadow = true;
-  group.add(crown);
+// Cone tree
+const GEO_CONE_TRUNK  = new THREE.CylinderGeometry(0.25, 0.4, 1, 5);
+const GEO_CONE_CROWN  = new THREE.ConeGeometry(1, 1.6, 7);
 
-  return group;
+// Round tree
+const GEO_ROUND_TRUNK = new THREE.CylinderGeometry(0.2, 0.35, 1, 5);
+const GEO_ROUND_CROWN = new THREE.SphereGeometry(1, 8, 6);
+
+// Layered pine (unit trunk + unit cone layer reused for both layers)
+const GEO_PINE_TRUNK  = new THREE.CylinderGeometry(0.2, 0.35, 1, 5);
+const GEO_PINE_LAYER  = new THREE.ConeGeometry(1, 1.2, 6);
+
+// Bench parts
+const GEO_BENCH_SEAT  = new THREE.BoxGeometry(3.5, 0.22, 1);
+const GEO_BENCH_BACK  = new THREE.BoxGeometry(3.5, 0.8, 0.18);
+const GEO_BENCH_LEG   = new THREE.BoxGeometry(0.22, 1.1, 1);
+
+// Lamppost parts
+const GEO_LAMP_POLE   = new THREE.CylinderGeometry(0.15, 0.2, 8, 6);
+const GEO_LAMP_HEAD   = new THREE.SphereGeometry(0.5, 6, 5);
+const GEO_LAMP_HALO   = new THREE.PlaneGeometry(28, 28); // ground light pool
+
+// ── Tree instance helpers ─────────────────────────────────────────────────────
+
+// Reusable scratch objects to avoid per-instance allocation in tight loops.
+const _pos  = new THREE.Vector3();
+const _rot  = new THREE.Euler();
+const _scl  = new THREE.Vector3();
+const _quat = new THREE.Quaternion();
+const _mat  = new THREE.Matrix4();
+
+/**
+ * Build a Matrix4 from separate position/rotation/scale components without
+ * allocating new objects (uses module-level scratch vars).
+ */
+function _compose(px, py, pz, ry, sx, sy, sz) {
+  _pos.set(px, py, pz);
+  _rot.set(0, ry, 0);
+  _scl.set(sx, sy, sz);
+  _quat.setFromEuler(_rot);
+  _mat.compose(_pos, _quat, _scl);
+  // Return a copy so callers can store it.
+  return _mat.clone();
 }
 
-function makeLayeredPine(rand) {
-  const group  = new THREE.Group();
-  const trunkH = 1 + rand() * 2;
+/**
+ * Place a cone tree instance into the provided InstanceBatch pair.
+ * @param {{ trunk: InstanceBatch, crown: InstanceBatch }} batches
+ * @param {number} x
+ * @param {number} z
+ * @param {number} ry   World-space Y rotation (radians)
+ * @param {Function} rand
+ */
+function addConeTree(batches, x, z, ry, rand) {
+  const gy     = getTerrainHeight(x, z);
+  const trunkH = 2 + rand() * 3;          // 2–5
+  const crownR = 2.5 + rand() * 1.5;      // 2.5–4
 
-  const trunk = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.2, 0.35, trunkH, 5),
-    new THREE.MeshLambertMaterial({ color: 0x5c3a1e })
+  batches.trunk.add(_compose(x, gy + trunkH / 2, z, ry, 1, trunkH, 1));
+
+  const crownCY = gy + trunkH + crownR * 0.7;
+  batches.crown.add(_compose(x, crownCY, z, ry, crownR, crownR * 1.6, crownR));
+}
+
+/**
+ * Place a round tree instance into the provided InstanceBatch pair.
+ */
+function addRoundTree(batches, x, z, ry, rand) {
+  const gy     = getTerrainHeight(x, z);
+  const trunkH = 1.5 + rand() * 2;        // 1.5–3.5
+  const crownR = 3 + rand() * 2;          // 3–5
+
+  batches.trunk.add(_compose(x, gy + trunkH / 2, z, ry, 1, trunkH, 1));
+
+  const crownCY = gy + trunkH + crownR * 0.75;
+  batches.crown.add(_compose(x, crownCY, z, ry, crownR, crownR, crownR));
+}
+
+/**
+ * Place a layered pine into the provided InstanceBatch set (trunk, layer0, layer1).
+ * Layer 1 may be skipped for trees that only have 2 cone layers — we always
+ * generate 2 layers (never the optional 3rd from the original) to match the
+ * two InstanceBatch slots available.
+ */
+function addLayeredPine(batches, x, z, ry, rand) {
+  const gy     = getTerrainHeight(x, z);
+  const trunkH = 1 + rand() * 2;          // 1–3
+
+  batches.trunk.add(_compose(x, gy + trunkH / 2, z, ry, 1, trunkH, 1));
+
+  const r0 = (2.5 + rand() * 1.5);        // 2.5–4
+  const h0 = r0 * 1.2;
+  const y0 = gy + trunkH + h0 * 0.4;
+  batches.layer0.add(_compose(x, y0, z, ry, r0, h0, r0));
+
+  const r1 = r0 * 0.75;
+  const h1 = r1 * 1.2;
+  const y1 = gy + (trunkH + h0 * 0.55) + h1 * 0.4;
+  batches.layer1.add(_compose(x, y1, z, ry, r1, h1, r1));
+}
+
+// ── Bench instance helper ─────────────────────────────────────────────────────
+
+/**
+ * Add all four bench part instances for a single bench placement.
+ * @param {{ seat: InstanceBatch, back: InstanceBatch, leftLeg: InstanceBatch, rightLeg: InstanceBatch }} batches
+ * @param {number} x
+ * @param {number} z
+ * @param {number} facingAngle  rotation.y for the bench group
+ */
+function addBench(batches, x, z, facingAngle) {
+  const gy = getTerrainHeight(x, z);
+  const benchRootQ = new THREE.Quaternion().setFromEuler(new THREE.Euler(0, facingAngle, 0));
+  const benchRoot  = new THREE.Matrix4().compose(
+    new THREE.Vector3(x, gy, z),
+    benchRootQ,
+    new THREE.Vector3(1, 1, 1)
   );
-  trunk.position.y = trunkH / 2;
-  trunk.castShadow = true;
-  group.add(trunk);
 
-  const layerCount = 2 + Math.floor(rand() * 2); // 2 or 3 layers
-  const colors = [0x2d6a2d, 0x246024];
-  let y = trunkH;
-  for (let i = 0; i < layerCount; i++) {
-    const r = (2.5 + rand() * 1.5) * (1 - i * 0.25);
-    const h = r * 1.2;
-    const layer = new THREE.Mesh(
-      new THREE.ConeGeometry(r, h, 6),
-      new THREE.MeshLambertMaterial({ color: colors[i % 2] })
+  // Each part: local position → transform by benchRoot
+  const _localPart = (lx, ly, lz) => {
+    const localM = new THREE.Matrix4().compose(
+      new THREE.Vector3(lx, ly, lz),
+      new THREE.Quaternion(), // no extra rotation on parts
+      new THREE.Vector3(1, 1, 1)
     );
-    layer.position.y = y + h * 0.4;
-    layer.castShadow = true;
-    group.add(layer);
-    y += h * 0.55;
-  }
+    return new THREE.Matrix4().multiplyMatrices(benchRoot, localM);
+  };
 
-  return group;
+  batches.seat.add(_localPart(0, 1.1, 0));
+  batches.back.add(_localPart(0, 1.6, -0.42));
+  batches.leftLeg.add(_localPart(-1.4, 0.55, 0));
+  batches.rightLeg.add(_localPart(1.4, 0.55, 0));
 }
 
-function makeTree(rand) {
-  const pick = rand();
-  if (pick < 0.33)      return makeConeTree(rand);
-  else if (pick < 0.66) return makeRoundTree(rand);
-  else                  return makeLayeredPine(rand);
-}
+// ── Lamppost instance helper ──────────────────────────────────────────────────
 
-function makeBench() {
-  const group    = new THREE.Group();
-  const plankMat = new THREE.MeshLambertMaterial({ color: 0x8B5e3c });
-  const legMat   = new THREE.MeshLambertMaterial({ color: 0x5c3a1e });
-
-  const seat = new THREE.Mesh(new THREE.BoxGeometry(3.5, 0.22, 1), plankMat);
-  seat.position.y = 1.1;
-  seat.castShadow = true;
-  group.add(seat);
-
-  const back = new THREE.Mesh(new THREE.BoxGeometry(3.5, 0.8, 0.18), plankMat);
-  back.position.set(0, 1.6, -0.42);
-  back.castShadow = true;
-  group.add(back);
-
-  for (const lx of [-1.4, 1.4]) {
-    const leg = new THREE.Mesh(new THREE.BoxGeometry(0.22, 1.1, 1), legMat);
-    leg.position.set(lx, 0.55, 0);
-    leg.castShadow = true;
-    group.add(leg);
-  }
-  return group;
-}
-
-function makeLamppost() {
-  const group = new THREE.Group();
-
-  const pole = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.15, 0.2, 8, 6),
-    new THREE.MeshLambertMaterial({ color: 0x333333 })
-  );
-  pole.position.y = 4;
-  pole.castShadow = true;
-  group.add(pole);
-
-  const headMat = new THREE.MeshLambertMaterial({ color: 0xffffaa });
-  const head = new THREE.Mesh(new THREE.SphereGeometry(0.5, 6, 5), headMat);
-  head.position.y = 8.5;
-  head.castShadow = true;
-  group.add(head);
-
-  const light = new THREE.PointLight(0xffd97a, 0, 28, 1.4);
-  light.position.y = 8.5;
-  group.add(light);
-
-  group.userData.lampLight   = light;
-  group.userData.lampHeadMat = headMat;
-
-  return group;
+/**
+ * Add a lamppost at world position (x, z).
+ * No PointLights — illumination is faked via emissive head + additive halo plane.
+ */
+function addLamppost(batches, x, z) {
+  const gy = getTerrainHeight(x, z);
+  batches.pole.add(_compose(x, gy + 4,   z, 0, 1, 1, 1));
+  batches.head.add(_compose(x, gy + 8.5, z, 0, 1, 1, 1));
+  _pos.set(x, gy + 0.15, z);
+  _rot.set(-Math.PI / 2, 0, 0);
+  _scl.set(1, 1, 1);
+  _quat.setFromEuler(_rot);
+  _mat.compose(_pos, _quat, _scl);
+  batches.halo.add(_mat.clone());
 }
 
 // ── Arc-length path sampling ──────────────────────────────────────────────────
 
 /**
  * Sample positions every `spacing` world-units along all bezier curves.
- * Returns { x, z, facingAngle } where facingAngle points TOWARD the path
- * from the offset side (so benches face in).
+ * Returns { x, z, facingAngle } where facingAngle points TOWARD the path.
  *
  * side: +1 = right side of travel direction, -1 = left
- * offset: perpendicular distance from centreline
+ * clearance: metres beyond the path edge (offset = halfWidth + clearance)
  */
-function _sampleAlongPaths(pathSegments, spacing, side, offset) {
+function _sampleAlongPaths(pathSegments, spacing, side, clearance) {
   const results = [];
-  // Stagger start per segment so furniture isn't all at the same arc position
-  let globalOffset = spacing * 0.4;
 
   for (const { pts } of pathSegments) {
-    let carry = globalOffset % spacing;
-    globalOffset += spacing * 0.37; // shift phase per segment
+    let carry = 0;
 
     for (let i = 1; i < pts.length; i++) {
-      const dx  = pts[i].x - pts[i - 1].x;
-      const dy  = pts[i].y - pts[i - 1].y;
+      const ax = pts[i].u ?? pts[i].x ?? 0, az = pts[i].v ?? pts[i].y ?? 0;
+      const bx = pts[i-1].u ?? pts[i-1].x ?? 0, bz = pts[i-1].v ?? pts[i-1].y ?? 0;
+      const dx  = ax - bx;
+      const dy  = az - bz;
       const len = Math.sqrt(dx * dx + dy * dy);
       if (len < 0.001) continue;
 
@@ -190,15 +260,15 @@ function _sampleAlongPaths(pathSegments, spacing, side, offset) {
 
       while (carry >= spacing) {
         carry -= spacing;
-        // Interpolation parameter within this segment
         const t  = (len - carry) / len;
-        const cx = pts[i - 1].x + dx * t;
-        const cy = pts[i - 1].y + dy * t;
+        const cx = bx + dx * t;
+        const cy = bz + dy * t;
 
-        // Tangent direction (normalised)
+        // Offset = half path width + clearance. Width defaults to 8 (single path).
+        const offset = 4 + clearance;
+
+        // Tangent + perpendicular
         const tx = dx / len, ty = dy / len;
-
-        // Perpendicular: side +1 → left of travel = (-ty, tx)
         const px = -ty * side, py = tx * side;
 
         const wx = cx + px * offset;
@@ -223,8 +293,9 @@ function _sampleAlongPaths(pathSegments, spacing, side, offset) {
 
 function _randomClear(rand, margin = 4) {
   for (let i = 0; i < MAX_TRIES; i++) {
-    const x = (rand() * 2 - 1) * PARK_HALF;
-    const z = (rand() * 2 - 1) * PARK_HALF;
+    const half = getParkHalf();
+    const x = (rand() * 2 - 1) * half;
+    const z = (rand() * 2 - 1) * half;
     if (!isOccupied(x, z, margin)) return { x, z };
   }
   return null;
@@ -232,50 +303,52 @@ function _randomClear(rand, margin = 4) {
 
 // ── Lake builder ──────────────────────────────────────────────────────────────
 
-function buildLake(scene, projectNodes, pathGraph, rand) {
+const LAKE_RX = 40;
+const LAKE_RZ = 26;
+
+/**
+ * Find the best lake position without building any geometry.
+ * Call this before bakePathMask so the lake area can be included in the mask.
+ */
+export function findLakePosition(projectNodes, pathGraph) {
   const STEP       = 20;
   const MIN_CLEAR  = 50;
   const CENTRE_EXC = 80;
 
-  // Collect obstacle positions
   const obstacles = [];
-  for (const p of projectNodes) obstacles.push([p.x, p.y]);
-  for (const n of (pathGraph?.nodes ?? [])) obstacles.push([n.x, n.y]);
+  for (const p of projectNodes) obstacles.push([p.layoutU ?? p.u ?? p.x ?? 0, p.layoutV ?? p.v ?? p.y ?? 0]);
+  for (const n of (pathGraph?.nodes ?? [])) obstacles.push([n.u ?? n.x ?? 0, n.v ?? n.y ?? 0]);
 
-  // Grid search for best placement
+  const bounds = getParkBounds();
+  const parkHalf = getParkHalf();
   let bestX = null, bestZ = null, bestDist = -1;
-  for (let gx = PARK_BOUNDS[0] + STEP; gx < PARK_BOUNDS[2] - STEP; gx += STEP) {
-    for (let gz = PARK_BOUNDS[1] + STEP; gz < PARK_BOUNDS[3] - STEP; gz += STEP) {
-      // Skip centre area
+  for (let gx = bounds[0] + STEP; gx < bounds[2] - STEP; gx += STEP) {
+    for (let gz = bounds[1] + STEP; gz < bounds[3] - STEP; gz += STEP) {
       if (gx * gx + gz * gz < CENTRE_EXC * CENTRE_EXC) continue;
-      // Skip near bounds (lake half-extents: rx=40, rz=26)
-      if (Math.abs(gx) > PARK_HALF - 50 || Math.abs(gz) > PARK_HALF - 36) continue;
-
+      if (Math.abs(gx) > parkHalf - 50 || Math.abs(gz) > parkHalf - 36) continue;
       let minDist = Infinity;
       for (const [ox, oz] of obstacles) {
         const d = Math.sqrt((gx - ox) ** 2 + (gz - oz) ** 2);
         if (d < minDist) minDist = d;
       }
-
-      if (minDist > bestDist) {
-        bestDist = minDist;
-        bestX = gx;
-        bestZ = gz;
-      }
+      if (minDist > bestDist) { bestDist = minDist; bestX = gx; bestZ = gz; }
     }
   }
 
-  if (bestDist < MIN_CLEAR) {
-    console.warn('[buildLake] No sufficiently clear area found; skipping lake.');
-    return null;
-  }
+  if (bestDist < MIN_CLEAR) return null;
+  return { x: bestX, z: bestZ, rx: LAKE_RX, rz: LAKE_RZ };
+}
+
+function buildLake(scene, lakePos, rand) {
+  if (!lakePos) return null;
+  const { x: bestX, z: bestZ } = lakePos;
 
   // Lake oval
   const lakeMesh = new THREE.Mesh(
     new THREE.CylinderGeometry(1, 1, 0.2, 36),
-    new THREE.MeshLambertMaterial({ color: LAKE_COLOR, transparent: true, opacity: 0.75 })
+    new THREE.MeshLambertMaterial({ color: LAKE_COLOR, transparent: true, opacity: 0.75, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1 })
   );
-  lakeMesh.scale.set(40, 1, 26);
+  lakeMesh.scale.set(LAKE_RX, 1, LAKE_RZ);
   lakeMesh.position.set(bestX, 0.05, bestZ);
   lakeMesh.receiveShadow = true;
   scene.add(lakeMesh);
@@ -283,76 +356,191 @@ function buildLake(scene, projectNodes, pathGraph, rand) {
   // Reeds around the ellipse edge
   const REED_COUNT = 28;
   const reedMat = new THREE.MeshLambertMaterial({ color: REED_COLOR });
-  const lakeRX = 40; // world X radius = scale.x (cylinder r=1)
-  const lakeRZ = 26; // world Z radius = scale.z (cylinder r=1)
 
   for (let i = 0; i < REED_COUNT; i++) {
     const angle  = (i / REED_COUNT) * Math.PI * 2 + (rand() - 0.5) * 0.3;
-    const radFac = 1.0 + rand() * 0.12; // 100–112% — always outside the lake edge
-    const rx     = lakeRX * radFac;
-    const rz     = lakeRZ * radFac;
-    const px     = bestX + Math.cos(angle) * rx;
-    const pz     = bestZ + Math.sin(angle) * rz;
-
-    const h    = 1.5 + rand() * 2;
-    const reed = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.1, 0.15, h, 4),
-      reedMat
-    );
+    const radFac = 1.0 + rand() * 0.12;
+    const px     = bestX + Math.cos(angle) * LAKE_RX * radFac;
+    const pz     = bestZ + Math.sin(angle) * LAKE_RZ * radFac;
+    const h      = 1.5 + rand() * 2;
+    const reed   = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.15, h, 4), reedMat);
     reed.position.set(px, h / 2, pz);
-    reed.rotation.z = (rand() - 0.5) * 0.12; // ±0.06 lean
+    reed.rotation.z = (rand() - 0.5) * 0.12;
     reed.castShadow = true;
     scene.add(reed);
   }
 
-  registerEllipse(bestX, bestZ, lakeRX, lakeRZ);
-  return { x: bestX, z: bestZ, rx: lakeRX, rz: lakeRZ };
+  registerEllipse(bestX, bestZ, LAKE_RX, LAKE_RZ);
+  return lakePos;
 }
 
 // ── Main export ───────────────────────────────────────────────────────────────
 
-export function buildEnvironment(scene, projectNodes, pathGraph, rand, pathSegments) {
+export function buildEnvironment(scene, projectNodes, pathGraph, rand, pathSegments, plazaRadius, lakePos) {
   const segs = pathSegments ?? [];
+  // Instancing caps grow with the park (never below the reference-size caps).
+  const cap = n => Math.ceil(n * Math.max(1, getParkAreaScale()));
 
   // ── Lake first so all subsequent placement can exclude it ───────────────
-  buildLake(scene, projectNodes, pathGraph, rand);
+  buildLake(scene, lakePos, rand);
 
-  // ── Benches (right side of path, skip if inside any obstacle) ────────────
-  const benchPoints = _sampleAlongPaths(segs, BENCH_SPACING, 1, BENCH_SIDE_DIST);
-  let benchPlaced = 0;
-  for (let i = 0; i < benchPoints.length && benchPlaced < BENCH_COUNT; i++) {
-    const { x, z, facingAngle } = benchPoints[i];
+  // ── InstanceBatch sets ──────────────────────────────────────────────────
+
+  // Trees — 3 types × 2 parts each
+  const coneBatches = {
+    trunk: new InstanceBatch(GEO_CONE_TRUNK,  MAT_TRUNK_DARK,  cap(MAX_CONE_TREES)),
+    crown: new InstanceBatch(GEO_CONE_CROWN,  MAT_CROWN_CONE,  cap(MAX_CONE_TREES)),
+  };
+  const roundBatches = {
+    trunk: new InstanceBatch(GEO_ROUND_TRUNK, MAT_TRUNK_MED,   cap(MAX_ROUND_TREES)),
+    crown: new InstanceBatch(GEO_ROUND_CROWN, MAT_CROWN_ROUND, cap(MAX_ROUND_TREES)),
+  };
+  const pineBatches = {
+    trunk:  new InstanceBatch(GEO_PINE_TRUNK, MAT_TRUNK_MED,   cap(MAX_ROUND_TREES)),
+    layer0: new InstanceBatch(GEO_PINE_LAYER, MAT_PINE_L0,     cap(MAX_PINE_LAYER0)),
+    layer1: new InstanceBatch(GEO_PINE_LAYER, MAT_PINE_L1,     cap(MAX_PINE_LAYER1)),
+  };
+
+  // Benches — 4 parts
+  const benchBatches = {
+    seat:     new InstanceBatch(GEO_BENCH_SEAT, MAT_PLANK, cap(MAX_BENCHES)),
+    back:     new InstanceBatch(GEO_BENCH_BACK, MAT_PLANK, cap(MAX_BENCHES)),
+    leftLeg:  new InstanceBatch(GEO_BENCH_LEG,  MAT_LEG,   cap(MAX_BENCHES)),
+    rightLeg: new InstanceBatch(GEO_BENCH_LEG,  MAT_LEG,   cap(MAX_BENCHES)),
+  };
+
+  // Lampposts — pole + head + ground halo (no PointLights)
+  const lampBatches = {
+    pole: new InstanceBatch(GEO_LAMP_POLE, MAT_POLE,      cap(MAX_LAMPS)),
+    head: new InstanceBatch(GEO_LAMP_HEAD, MAT_LAMP_HEAD, cap(MAX_LAMPS)),
+    halo: new InstanceBatch(GEO_LAMP_HALO, MAT_LAMP_HALO, cap(MAX_LAMPS)),
+  };
+
+  // ── Benches (right side of path) ────────────────────────────────────────
+  const benchPoints = _sampleAlongPaths(segs, BENCH_SPACING, 1, BENCH_SIDE_CLEAR);
+  for (const { x, z, facingAngle } of benchPoints) {
     if (isOccupied(x, z, 2)) continue;
-    const bench = makeBench();
-    bench.position.set(x, 0, z);
-    bench.rotation.y = facingAngle;
-    scene.add(bench);
-    benchPlaced++;
+    addBench(benchBatches, x, z, facingAngle);
+    registerCircle(x, z, 1.5);
+    registerBench(x, z, facingAngle);
   }
 
-  // ── Lampposts (left side of path, skip if inside any obstacle) ────────────
-  const lampPoints = _sampleAlongPaths(segs, LAMP_SPACING, -1, LAMP_SIDE_DIST);
-  let lampPlaced = 0;
-  const lampLights = [];
-  for (let i = 0; i < lampPoints.length && lampPlaced < LAMPPOST_COUNT; i++) {
-    const { x, z } = lampPoints[i];
+  // ── Lampposts (left side of path) ───────────────────────────────────────
+  const lampPoints = _sampleAlongPaths(segs, LAMP_SPACING, -1, LAMP_SIDE_CLEAR);
+  for (const { x, z } of lampPoints) {
     if (isOccupied(x, z, 2)) continue;
-    const lamp = makeLamppost();
-    lamp.position.set(x, 0, z);
-    scene.add(lamp);
-    lampLights.push(lamp.userData.lampLight);
-    lampPlaced++;
+    addLamppost(lampBatches, x, z);
+    registerCircle(x, z, 1.0);
   }
 
-  // ── Trees (random, avoiding all registry obstacles) ────────────────────
-  for (let i = 0; i < TREE_COUNT; i++) {
+  // ── Props around plaza circumferences ───────────────────────────────────
+  if (plazaRadius) {
+    for (const p of projectNodes) {
+      const r = plazaRadius.get(p.id);
+      if (!r) continue;
+      const cx = p.layoutU, cz = p.layoutV;
+      const edgeR = r + 5; // just outside the plaza disc edge
+      const circumference = 2 * Math.PI * edgeR;
+      const lampCount  = Math.max(2, Math.floor(circumference / LAMP_SPACING));
+      const benchCount = Math.max(1, Math.floor(circumference / BENCH_SPACING));
+
+      for (let i = 0; i < lampCount; i++) {
+        const angle = (i / lampCount) * Math.PI * 2;
+        const x = cx + Math.cos(angle) * edgeR;
+        const z = cz + Math.sin(angle) * edgeR;
+        if (isOccupied(x, z, 2)) continue;
+        addLamppost(lampBatches, x, z);
+        registerCircle(x, z, 1.0);
+      }
+      for (let i = 0; i < benchCount; i++) {
+        const angle = (i / benchCount) * Math.PI * 2 + Math.PI / benchCount; // offset from lamps
+        const x = cx + Math.cos(angle) * edgeR;
+        const z = cz + Math.sin(angle) * edgeR;
+        if (isOccupied(x, z, 2)) continue;
+        const facingAngle = Math.atan2(cx - x, cz - z); // face toward plaza centre
+        addBench(benchBatches, x, z, facingAngle);
+        registerCircle(x, z, 1.5);
+        registerBench(x, z, facingAngle);
+      }
+    }
+  }
+
+  // ── Trees (random, avoiding all registry obstacles) ──────────────────────
+  const treeCount = Math.round(TREE_DENSITY * getParkAreaScale());
+  for (let i = 0; i < treeCount; i++) {
     const pos = _randomClear(rand, 4);
     if (!pos) continue;
-    const tree = makeTree(rand);
-    tree.position.set(pos.x, 0, pos.z);
-    tree.rotation.y = rand() * Math.PI * 2;
-    scene.add(tree);
+    const ry   = rand() * Math.PI * 2;
+    const pick = rand();
+    if (pick < 0.33)      addConeTree(coneBatches,   pos.x, pos.z, ry, rand);
+    else if (pick < 0.66) addRoundTree(roundBatches,  pos.x, pos.z, ry, rand);
+    else                  addLayeredPine(pineBatches,  pos.x, pos.z, ry, rand);
   }
 
-  return { lampLights };
+  // ── Rock outcroppings on steep slopes ───────────────────────────────────
+  _buildRocks(scene, rand);
+
+  // ── Finalize all InstanceBatches (set count + add to scene) ─────────────
+  for (const b of Object.values(coneBatches))  b.finalize(scene);
+  for (const b of Object.values(roundBatches)) b.finalize(scene);
+  for (const b of Object.values(pineBatches))  b.finalize(scene);
+  for (const b of Object.values(benchBatches)) b.finalize(scene);
+  for (const b of Object.values(lampBatches))  b.finalize(scene);
+
+  // Return lamp materials so dayCycle can drive emissive + halo opacity
+  return { lampHeadMat: MAT_LAMP_HEAD, lampHaloMat: MAT_LAMP_HALO };
+}
+
+// ── Rock outcroppings ─────────────────────────────────────────────────────────
+
+const ROCK_COLORS = [0x7a7060, 0x6a6258, 0x857a6e, 0x908880];
+
+function _buildRocks(scene, rand) {
+  const PROBE  = 4;    // slope detection step in world units
+  const COUNT  = Math.round(120 * getParkAreaScale());  // candidate positions to try
+  const HALF   = getParkHalf() - 20;
+  const PLACED = [];
+
+  for (let attempt = 0; attempt < COUNT * 6 && PLACED.length < COUNT; attempt++) {
+    const x = (rand() * 2 - 1) * HALF;
+    const z = (rand() * 2 - 1) * HALF;
+
+    // Measure local slope
+    const h  = getTerrainHeight(x, z);
+    const hx = getTerrainHeight(x + PROBE, z);
+    const hz = getTerrainHeight(x, z + PROBE);
+    const slope = Math.max(Math.abs(h - hx), Math.abs(h - hz)) / PROBE;
+
+    // Only place where slope is significant and height is meaningful
+    if (slope < 0.35 || h < TERRAIN_MAX_HEIGHT * 0.2) continue;
+    if (isOccupied(x, z, 5)) continue;
+
+    // Cluster of 1-4 boulders
+    const clusterCount = 1 + Math.floor(rand() * 3);
+    for (let b = 0; b < clusterCount; b++) {
+      const bx = x + (rand() - 0.5) * 8;
+      const bz = z + (rand() - 0.5) * 8;
+      const by = getTerrainHeight(bx, bz);
+
+      const rx = 1.2 + rand() * 2.0;
+      const ry = 0.7 + rand() * 1.2;
+      const rz = 1.0 + rand() * 1.8;
+
+      const geo  = new THREE.SphereGeometry(1, 5, 4);
+      const col  = ROCK_COLORS[Math.floor(rand() * ROCK_COLORS.length)];
+      const mat  = new THREE.MeshLambertMaterial({ color: col });
+      const mesh = new THREE.Mesh(geo, mat);
+
+      mesh.scale.set(rx, ry, rz);
+      mesh.position.set(bx, by + ry * 0.4, bz);
+      mesh.rotation.y = rand() * Math.PI * 2;
+      mesh.rotation.z = (rand() - 0.5) * 0.3;
+      mesh.castShadow    = true;
+      mesh.receiveShadow = true;
+      scene.add(mesh);
+    }
+
+    registerCircle(x, z, 4);
+    PLACED.push({ x, z });
+  }
 }

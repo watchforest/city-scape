@@ -5,7 +5,7 @@
  * Returns ordered array of node ids from startId to goalId (inclusive).
  * Returns [] if no path exists.
  */
-export function bfsPath(adjacency, startId, goalId, nodeMap) {
+export function dijkstraPath(adjacency, startId, goalId, nodeMap) {
   if (startId === goalId) return [startId];
 
   // Min-heap via sorted insertion — graph is small enough that this is fine
@@ -27,7 +27,7 @@ export function bfsPath(adjacency, startId, goalId, nodeMap) {
       let w = 1;
       if (nodeMap) {
         const a = nodeMap.get(current), b = nodeMap.get(neighbor);
-        if (a && b) w = Math.hypot(b.x - a.x, b.y - a.y);
+        if (a && b) w = Math.hypot((b.u ?? b.x ?? 0) - (a.u ?? a.x ?? 0), (b.v ?? b.y ?? 0) - (a.v ?? a.y ?? 0));
       }
       const nd = currentDist + w;
       if (nd < (dist.get(neighbor) ?? Infinity)) {

@@ -1,14 +1,18 @@
 import * as THREE from 'three';
-import { PARK_BOUNDS, CLOUD_COLOR } from '@/config.js';
+import { CLOUD_COLOR } from '@/config.js';
+import { getParkHalf } from './parkBounds.js';
 
 const CLOUD_COUNT = 4;
 const CLOUD_SPEED = 6;   // units/sec in +X direction
-const PARK_HALF   = (PARK_BOUNDS[2] - PARK_BOUNDS[0]) / 2;
-const WRAP_EDGE   = PARK_HALF + 80;
+const WRAP_MARGIN = 80;   // clouds wrap this far beyond the park edge
 
 const _clouds = [];
 
+let _wrapEdge = 0;
+
 export function buildClouds(scene, rand) {
+  const parkHalf = getParkHalf();
+  _wrapEdge = parkHalf + WRAP_MARGIN;
   const mat = new THREE.MeshLambertMaterial({
     color: CLOUD_COLOR,
     transparent: true,
@@ -40,8 +44,8 @@ export function buildClouds(scene, rand) {
     }
 
     // Spread clouds across the park at different starting X positions
-    const startX = (rand() * 2 - 1) * WRAP_EDGE;
-    const z      = (rand() * 2 - 1) * PARK_HALF * 0.8;
+    const startX = (rand() * 2 - 1) * _wrapEdge;
+    const z      = (rand() * 2 - 1) * parkHalf * 0.8;
     const y      = 120 + rand() * 40;   // 120–160 height
 
     group.position.set(startX, y, z);
@@ -53,8 +57,8 @@ export function buildClouds(scene, rand) {
 export function updateClouds(dt) {
   for (const cloud of _clouds) {
     cloud.position.x += CLOUD_SPEED * dt;
-    if (cloud.position.x > WRAP_EDGE) {
-      cloud.position.x = -WRAP_EDGE;
+    if (cloud.position.x > _wrapEdge) {
+      cloud.position.x = -_wrapEdge;
     }
   }
 }
