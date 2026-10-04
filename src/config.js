@@ -220,6 +220,19 @@ export const AGENT_SEP_RADIUS     = 8;   // separation distance
 export const AGENT_RADIUS         = 0.9; // agents never get closer than twice this (agents/collision.js)
 export const LANDMARK_BLOCK_SCALE = 0.8; // share of a landmark's bounding radius that agents can't enter
 export const AGENT_SEP_STRENGTH   = 20;  // separation force magnitude
+// Benches: two seats each, and people like company.
+export const BENCH_SOCIAL_BONUS   = 70;  // a seat beside someone already sitting counts as this much closer when choosing where to sit
+export const BENCH_SOCIAL_RADIUS  = 120; // someone sitting alone within this distance draws an agent that has just finished a stroll …
+export const BENCH_JOIN_CHANCE    = 0.2;  // … with this chance it goes and sits beside them (the sitter waits for it) …
+export const BENCH_SOCIAL_BOOST   = 3;   // … and an idle agent's taste for benches is multiplied by this
+export const BENCH_WAIT_EXTRA     = 12;  // a sitter whose neighbour seat has just been claimed stays until the newcomer has walked over, plus this long
+export const SEATED_CHAT_MIN      = 12;  // two people sitting together stay at least this long (seconds) …
+export const SEATED_CHAT_EXTRA    = 12;  // … plus up to this much more
+// Passing on a path (agents/passing.js): everyone keeps to the right-hand side.
+export const AGENT_LANE_OFFSET    = [1.0, 1.9]; // each walker's own lane: this far right of the path's centre line (path width is 8)
+export const PASS_LOOK     = 7;    // look this far ahead for someone coming the other way
+export const PASS_WIDTH    = 2.6;  // … who is within this sideways distance of the walker's line
+export const PASS_STRENGTH = 0.9;  // sidestep force, × the walker's max speed (at point-blank)
 export const AGENT_WANDER_AMP     = 1.5; // wander perpendicular amplitude
 export const AGENT_WANDER_FREQ    = 0.3; // wander oscillation frequency
 export const AGENT_MAX_FORCE      = 40;  // max steering force per axis

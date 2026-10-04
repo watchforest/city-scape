@@ -2,7 +2,8 @@
  * Waypoint-chain construction over the rendered path ribbon network.
  *
  * Two entry points:
- *   - buildStrollWaypoints: junction-aware random stroll (idle wandering)
+ *   - buildStrollWaypoints: a random walk over the network (idle wandering): at every junction the agent picks
+ *     one of the paths that meet there, favouring ones it has taken less often
  *   - buildRouteWaypoints:  directed walk toward a specific attraction,
  *     using Dijkstra over the sparse nav graph then expanding each hop
  *     into fine waypoints along the corresponding rendered path segment.
@@ -10,90 +11,125 @@
 
 import { dijkstraPath } from './pathfinding.js';
 
-// How many path segments to stitch together per stroll (controls walk length).
-// Kept short so agents re-roll their next behaviour (chat/rest/keep-walking)
-// every few seconds rather than committing to one long march — 3 stitched
-// segments produced 150+ waypoints (60-90s of continuous walking), which
-// made idle/chat states unreachable in practice.
-const WALK_SEGMENTS = 1;
+// An agent this close to the end of a segment counts as standing at that segment's node (a plaza rim).
+const NODE_RADIUS = 12;
+// Weight of the path just walked when choosing the next one at a junction: low, so agents hardly ever turn straight back.
+const TURN_BACK_WEIGHT = 0.08;
+// Chance that an agent which was interrupted halfway along a path carries on the way it was going.
+const KEEP_HEADING = 0.8;
+
+const _nodeSegsCache = new WeakMap();
+
+/** node id → the segments that end at it (cached per segment list). */
+function segmentsByNode(pathSegments) {
+  let m = _nodeSegsCache.get(pathSegments);
+  if (m) return m;
+  m = new Map();
+  for (const seg of pathSegments) {
+    for (const id of [seg.edgeFromId, seg.edgeToId]) {
+      if (!m.has(id)) m.set(id, []);
+      m.get(id).push(seg);
+    }
+  }
+  _nodeSegsCache.set(pathSegments, m);
+  return m;
+}
+
+/** Index of a weighted random pick. */
+function pickWeighted(weights, rand) {
+  const total = weights.reduce((a, b) => a + b, 0);
+  let r = rand() * total;
+  for (let i = 0; i < weights.length; i++) { if ((r -= weights[i]) < 0) return i; }
+  return weights.length - 1;
+}
 
 /**
- * Build a waypoint chain by strolling along path ribbons.
+ * Build the next leg of an agent's wandering: a random walk over the path network, one path at a time.
  *
- * Starting from the closest point on any segment, walk forward along that
- * segment, then at the end randomly pick a connected segment to continue
- * onto (junction-aware strolling). Repeats for WALK_SEGMENTS hops.
+ * - Standing at a node (the rim of a plaza, where paths meet): choose one of the paths that meet there. Paths the
+ *   agent has walked less often are likelier (1 / (1 + times walked)²), and the path it just came along is hardly
+ *   ever chosen, so it works its way across the whole map instead of pacing up and down one path. The leg goes round
+ *   the plaza rim to the start of the chosen path and then all the way along it.
+ * - Somewhere along a path (it stopped for a chat, a seat …): carry on the way it was heading, mostly, to the end.
  *
  * @param {{u,v}}         pos
  * @param {PathSegment[]} pathSegments  — [{edgeFromId, edgeToId, pts:[{u,v,tu,tv,arc}]}]
  * @param {function}      rand
- * @param {string|null}   avoidEndId    — node id to avoid as first segment's end (last-visited)
+ * @param {object}        memory        — the agent's own { lastSeg, heading, visits: Map(seg → times walked) }, updated here
+ * @param {Map}           nodeMap       — nav graph nodes by id (their centres, for going round a plaza)
  * @returns {{u,v}[]}
  */
-export function buildStrollWaypoints(pos, pathSegments, rand, avoidEndId) {
+export function buildStrollWaypoints(pos, pathSegments, rand, memory, nodeMap) {
   if (!pathSegments || pathSegments.length === 0) return [];
+  memory.visits ??= new Map();
+  const visits = seg => memory.visits.get(seg) ?? 0;
+  const nodeSegs = segmentsByNode(pathSegments);
 
-  // ── Step 1: find closest segment and injection index ──────────────────────
-  let bestSeg = null, bestIdx = 0, bestDist = Infinity;
+  // The path point nearest the agent, and whether it is at either end of its segment.
+  let seg0 = null, idx0 = 0, best = Infinity;
   for (const seg of pathSegments) {
     for (let i = 0; i < seg.pts.length; i++) {
-      const d = Math.hypot(seg.pts[i].u - pos.u, seg.pts[i].v - pos.v);
-      if (d < bestDist) { bestDist = d; bestSeg = seg; bestIdx = i; }
+      const d = (seg.pts[i].u - pos.u) ** 2 + (seg.pts[i].v - pos.v) ** 2;
+      if (d < best) { best = d; seg0 = seg; idx0 = i; }
     }
   }
-  if (!bestSeg) return [];
+  if (!seg0) return [];
+  const first = seg0.pts[0], last = seg0.pts[seg0.pts.length - 1];
+  const dStart = Math.hypot(first.u - pos.u, first.v - pos.v), dEnd = Math.hypot(last.u - pos.u, last.v - pos.v);
 
-  // ── Step 2: build adjacency — which segments share an endpoint ────────────
-  const nodeSegs = new Map();
-  for (const seg of pathSegments) {
-    for (const nodeId of [seg.edgeFromId, seg.edgeToId]) {
-      if (!nodeSegs.has(nodeId)) nodeSegs.set(nodeId, []);
-      nodeSegs.get(nodeId).push(seg);
-    }
-  }
+  let waypoints, seg, towardId;
 
-  // ── Step 3: stroll forward through WALK_SEGMENTS hops ────────────────────
-  const waypoints = [];
-  let curSeg = bestSeg;
-  let startIdx = bestIdx;
-  let forward = true;
+  if (Math.min(dStart, dEnd) < NODE_RADIUS) {
+    // ── At a node: choose among the paths that meet here ────────────────────────
+    const nodeId = dStart <= dEnd ? seg0.edgeFromId : seg0.edgeToId;
+    const options = nodeSegs.get(nodeId) ?? [seg0];
+    const weights = options.map(s => (1 / (1 + visits(s)) ** 2) * (s === memory.lastSeg ? TURN_BACK_WEIGHT : 1));
+    seg = options[pickWeighted(weights, rand)];
 
-  if (avoidEndId && bestIdx < bestSeg.pts.length * 0.2) {
-    forward = bestSeg.edgeFromId === avoidEndId ? true : (rand() < 0.5);
-  } else if (avoidEndId && bestIdx > bestSeg.pts.length * 0.8) {
-    forward = bestSeg.edgeToId === avoidEndId ? false : (rand() < 0.5);
+    const away = seg.edgeFromId === nodeId;                 // does the path start at this node?
+    const pts = away ? seg.pts : [...seg.pts].reverse();
+    towardId = away ? seg.edgeToId : seg.edgeFromId;
+    waypoints = [...arcAroundNode(nodeMap?.get(nodeId), pos, pts[0]), ...pts.map(p => ({ u: p.u, v: p.v }))];
   } else {
-    forward = rand() < 0.5;
+    // ── Somewhere along a path: finish it ───────────────────────────────────────
+    seg = seg0;
+    let forward;
+    if (memory.heading?.seg === seg) forward = rand() < KEEP_HEADING ? memory.heading.toward === seg.edgeToId : memory.heading.toward !== seg.edgeToId;
+    else forward = rand() < 0.5;
+    towardId = forward ? seg.edgeToId : seg.edgeFromId;
+    waypoints = [];
+    if (forward) for (let i = idx0; i < seg.pts.length; i++) waypoints.push({ u: seg.pts[i].u, v: seg.pts[i].v });
+    else for (let i = idx0; i >= 0; i--) waypoints.push({ u: seg.pts[i].u, v: seg.pts[i].v });
   }
 
-  for (let hop = 0; hop < WALK_SEGMENTS; hop++) {
-    const pts = curSeg.pts;
-    if (forward) {
-      for (let i = startIdx + (waypoints.length === 0 ? 0 : 1); i < pts.length; i++) {
-        waypoints.push({ u: pts[i].u, v: pts[i].v });
-      }
-    } else {
-      for (let i = startIdx - (waypoints.length === 0 ? 0 : 1); i >= 0; i--) {
-        waypoints.push({ u: pts[i].u, v: pts[i].v });
-      }
-    }
-
-    const endNodeId = forward ? curSeg.edgeToId : curSeg.edgeFromId;
-    const candidates = (nodeSegs.get(endNodeId) ?? []).filter(s => s !== curSeg);
-    if (candidates.length === 0) {
-      forward = !forward;
-      startIdx = forward ? 0 : pts.length - 1;
-      break;
-    }
-
-    const nextSeg = candidates[Math.floor(rand() * candidates.length)];
-    const nextForward = nextSeg.edgeFromId === endNodeId;
-    startIdx = nextForward ? 0 : nextSeg.pts.length - 1;
-    curSeg   = nextSeg;
-    forward  = nextForward;
-  }
-
+  memory.lastSeg = seg;
+  memory.heading = { seg, toward: towardId };
+  memory.visits.set(seg, visits(seg) + 1);
   return waypoints;
+}
+
+/**
+ * Shift a waypoint chain `lane` units to the right of its direction of travel, so that people walking in opposite
+ * directions use opposite sides of the path. The shift grows from nothing over the first few waypoints (the agent
+ * starts wherever it is) and, for a walk that ends at something (`keepLast`), shrinks away again at the end.
+ *
+ * @param {{u,v}[]} wps
+ * @param {number}  lane      distance to the right of the centre line
+ * @param {{ rampIn?: number, keepLast?: boolean }} [opts]
+ */
+export function offsetToRight(wps, lane, { rampIn = 4, keepLast = false } = {}) {
+  const n = wps.length;
+  if (n < 2) return wps;
+  return wps.map((p, i) => {
+    const a = wps[Math.max(0, i - 1)], b = wps[Math.min(n - 1, i + 1)];
+    let du = b.u - a.u, dv = b.v - a.v;
+    const len = Math.hypot(du, dv);
+    if (len < 1e-6) return p;
+    du /= len; dv /= len;
+    let k = Math.min(1, (i + 1) / rampIn);
+    if (keepLast) k = Math.min(k, (n - 1 - i) / rampIn);           // fade out towards the goal
+    return { u: p.u - dv * lane * k, v: p.v + du * lane * k };       // right of (du, dv) is (−dv, du)
+  });
 }
 
 const ARC_STEP = 6; // world units between waypoints on a plaza rim

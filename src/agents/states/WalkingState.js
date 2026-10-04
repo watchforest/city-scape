@@ -1,5 +1,6 @@
 /**
- * WalkingState — idle strolling along the path ribbon network, or a directed
+ * WalkingState — idle strolling along the path ribbon network (a random walk that works its way across the whole
+ * map, remembered per agent in agent.roam; see buildStrollWaypoints), or a directed
  * walk toward a chosen attraction when agent.walkingToAttraction is set.
  *
  * Rebuilds a yuka.Path each time a new stroll/route starts and drives the
@@ -13,10 +14,11 @@
  */
 
 import * as YUKA from 'yuka';
-import { buildStrollWaypoints, buildRouteWaypoints } from '../waypoints.js';
+import { buildStrollWaypoints, buildRouteWaypoints, offsetToRight } from '../waypoints.js';
+import { PassOncomingBehavior } from '../passing.js';
 import { selectNextBehaviour } from '../idleSelection.js';
 import { outsideLandmarks } from '../collision.js';
-import { CHAT_MIN, CHAT_MAX, DANCE_MIN, DANCE_MAX } from '@/config.js';
+import { CHAT_MIN, CHAT_MAX, DANCE_MIN, DANCE_MAX, AGENT_LANE_OFFSET } from '@/config.js';
 
 const ARRIVE_TOLERANCE = 1.5;
 // yuka reports a path finished as soon as the *last* waypoint becomes the target,
@@ -34,7 +36,7 @@ export class WalkingState extends YUKA.State {
     this._follow       = new YUKA.FollowPathBehavior();
     this._follow.nextWaypointDistance = 8;
     this._follow._arrive.tolerance    = ARRIVE_TOLERANCE;
-    this._lastNodeId    = null;
+    this._pass         = new PassOncomingBehavior(); // sidestep to the right for someone coming the other way
   }
 
   enter(agent) {
@@ -43,6 +45,7 @@ export class WalkingState extends YUKA.State {
     agent.playRole(sprinting ? 'run' : 'walk');
     agent.maxSpeed = sprinting ? agent._sprintSpeed : agent._baseSpeed;
     agent.steering.add(this._follow);
+    agent.steering.add(this._pass);
     this._startStroll(agent);
   }
 
@@ -82,6 +85,7 @@ export class WalkingState extends YUKA.State {
 
   exit(agent) {
     agent.steering.remove(this._follow);
+    agent.steering.remove(this._pass);
   }
 
   _atGoal(agent) {
@@ -94,9 +98,12 @@ export class WalkingState extends YUKA.State {
     const pos = { u: agent.position.x, v: agent.position.z };
     const attraction = agent.walkingToAttraction;
 
-    const wps = attraction
+    const centreLine = attraction
       ? buildRouteWaypoints(pos, attraction, this._navGraph, this._pathSegments)
-      : buildStrollWaypoints(pos, this._pathSegments, agent.rand ?? Math.random, this._lastNodeId);
+      : buildStrollWaypoints(pos, this._pathSegments, agent.rand ?? Math.random, (agent.roam ??= {}), this._navGraph.nodeMap);
+    // Walk in this agent's own lane, to the right of the centre line, so oncoming walkers pass on opposite sides.
+    agent.laneOffset ??= AGENT_LANE_OFFSET[0] + (agent.rand ?? Math.random)() * (AGENT_LANE_OFFSET[1] - AGENT_LANE_OFFSET[0]);
+    const wps = offsetToRight(centreLine, agent.laneOffset, { keepLast: !!attraction });
 
     this._follow.path.clear();
     if (wps.length === 0) {

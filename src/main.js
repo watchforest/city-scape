@@ -140,7 +140,7 @@ async function init() {
       frameLandmark(attraction, { zoomOutHere: true });
     }
   );
-  if (import.meta.env.DEV) Object.assign(window.__dbg ??= {}, { cam, controls, camController, agentController, scene, attractionMeshes, clouds: { update: updateClouds, state: cloudState } }); // dev only: poke at the scene from the console
+  if (import.meta.env.DEV) Object.assign(window.__dbg ??= {}, { cam, controls, camController, agentController, scene, attractionMeshes, pathSegments, navGraph, clouds: { update: updateClouds, state: cloudState } }); // dev only: poke at the scene from the console
   agentController.setRand(rand);
   agentController.setCamera(cam);
   agentController.setDismissCallback(() => { camController.zoomOut(); activeAgent = null; });
