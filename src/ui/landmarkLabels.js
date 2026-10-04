@@ -37,6 +37,7 @@ export function initLandmarkLabels(cam, renderer, attractionMeshes) {
     el.textContent = instance.name;
     el.style.cssText = `
       position: absolute; left: 0; top: 0; white-space: nowrap; will-change: transform;
+      max-width: 220px; overflow: hidden; text-overflow: ellipsis;
       transition: opacity 0.15s;
       padding: 3px 9px; border-radius: 6px;
       font: 600 12px/1.3 system-ui, sans-serif;

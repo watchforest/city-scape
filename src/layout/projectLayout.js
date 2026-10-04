@@ -154,7 +154,7 @@ export function layoutProjects(projects, rand) {
   _fa2LinLog(nodes, edges, 300, { scalingRatio: 5, gravity: 0.8, speed: 0.15 });
   _fa2LinLog(nodes, edges, 300, { scalingRatio: 15, gravity: 0.1, speed: 0.08 });
   _rescale(nodes, bounds, 0);
-  _enforceMinDist(nodes, 55);
+  _enforceMinDist(nodes, 72); // plazas are 24+ units across from their centre: any closer and neighbouring plazas merge
 
   return nodes;
 }

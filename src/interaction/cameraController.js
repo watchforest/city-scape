@@ -169,7 +169,8 @@ export class CameraController {
     this._beginInteraction();
     this._followTarget = mesh;
     this._followHeight = height;
-    this._followDist = this._chooseDistance(frame);
+    // Following always settles at the comfortable distance: from a close-up of the person it pulls back to show where they are heading.
+    this._followDist = typeof frame === 'number' ? this._chooseDistance(frame) : frame.comfort;
     this._zoomOutHere = false;
     this._insetTarget = 0;
     this._mode = 'follow';

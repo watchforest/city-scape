@@ -45,7 +45,7 @@ export class AgentController {
     this._gatherings = new GatheringManager(() => this._rand()); // chats and dances (gatherings.js)
     setLandmarks(attractions);
 
-    if (navGraph.nodes.length < 2) return;
+    if (navGraph.nodes.length < 1) return; // (a single landmark has no paths: people just hang about it)
 
     // There is no procedural fallback: every agent needs a character model.
     if (assetLibrary.resolve('person:default').type !== 'gltf') {

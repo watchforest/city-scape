@@ -8,6 +8,7 @@ function _ensure() {
   _el.style.cssText = `
     position: fixed; z-index: 20; pointer-events: none; display: none;
     padding: 4px 9px; border-radius: 6px; white-space: nowrap;
+    max-width: 280px; overflow: hidden; text-overflow: ellipsis;
     font: 600 12px/1.3 system-ui, sans-serif;
     background: var(--ui-bg, rgba(255,248,230,0.95)); color: var(--ui-text, #2d1a00);
     border: 1px solid var(--ui-border, #c8a850); box-shadow: 0 2px 8px rgba(0,0,0,0.25);

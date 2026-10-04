@@ -29,11 +29,18 @@ async function fetchJSON(url) {
   }
 }
 
+/**
+ * `?data=<name>` loads people.csv / projects.csv from `assets/data/_test/<name>/` instead (see scripts/genTestData.mjs,
+ * for trying other datasets); the shared quotes.json is used unless that folder has its own.
+ */
 export async function loadData() {
-  const [people, projects, quotes] = await Promise.all([
-    fetchCSV(assetUrl('assets/data/people.csv')),
-    fetchCSV(assetUrl('assets/data/projects.csv')),
-    fetchJSON(assetUrl('assets/data/quotes.json')),
+  const name = new URLSearchParams(location.search).get('data');
+  const dir = name && /^[\w-]+$/.test(name) ? `assets/data/_test/${name}/` : 'assets/data/';
+  const [people, projects, ownQuotes] = await Promise.all([
+    fetchCSV(assetUrl(`${dir}people.csv`)),
+    fetchCSV(assetUrl(`${dir}projects.csv`)),
+    dir === 'assets/data/' ? {} : fetchJSON(assetUrl(`${dir}quotes.json`)),
   ]);
+  const quotes = Array.isArray(ownQuotes) ? ownQuotes : await fetchJSON(assetUrl('assets/data/quotes.json'));
   return { people, projects, quotes };
 }
