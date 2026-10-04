@@ -12,6 +12,7 @@
 import * as THREE from 'three';
 import { getParkHalf, getParkScale } from './parkBounds.js';
 import { setWaterLight } from './lake.js';
+import { setSkyColors } from './sky.js';
 import { SKY_DAY, SKY_DAWN, SKY_NIGHT } from '@/config.js';
 
 const _skyDay   = new THREE.Color(SKY_DAY);
@@ -22,6 +23,9 @@ const _skyNight = new THREE.Color(SKY_NIGHT);
 const _skyBuf = new THREE.Color();
 const _lightDir = new THREE.Vector3();
 const _lightCol = new THREE.Color();
+const _white = new THREE.Color(1, 1, 1);
+const _horizonBuf = new THREE.Color();
+const _zenithBuf = new THREE.Color();
 
 function _lerpSky(a, b, t, out) {
   out.r = a.r + (b.r - a.r) * t;
@@ -49,8 +53,11 @@ export class DayCycle {
     this._lampHaloMat = null;
     this._lastUpdateMs = -Infinity; // update() is throttled; see UPDATE_INTERVAL_MS
     this._cssNight = null;          // last theme written to the CSS variables
+    this.daylight = 1;              // 0 (night) … 1 (day); set by update()
 
-    this._ambient = new THREE.AmbientLight(0xffffff, 0.3);
+    // Hemisphere light instead of flat ambient: surfaces facing the sky pick up the sky colour and
+    // downward-facing ones the (darker, earthier) ground colour, so shadowed sides keep some form.
+    this._ambient = new THREE.HemisphereLight(0xffffff, 0x555555, 0.3);
     scene.add(this._ambient);
 
     this._sun = new THREE.DirectionalLight(0xfff5e0, 1.0);
@@ -134,9 +141,19 @@ export class DayCycle {
       sky = _lerpSky(_skyDawn, _skyNight, t, _skyBuf);
     }
     this._scene.background.set(sky);
+    this.daylight = Math.min(1, sunAbove * 1.6); // 0 at night … 1 for most of the day (cloud shadows, …)
+
+    // Gradient sky dome: hazy horizon, deeper zenith. At dawn/dusk the horizon keeps the warm sky colour.
+    _horizonBuf.copy(sky).lerp(_white, 0.35 * this.daylight);
+    _zenithBuf.copy(sky).multiplyScalar(0.55 + 0.1 * this.daylight);
+    _zenithBuf.b = Math.min(1, _zenithBuf.b + 0.12 * this.daylight);
+    setSkyColors(_horizonBuf, _zenithBuf);
 
     // ── Ambient ───────────────────────────────────────────────────────────
-    this._ambient.intensity = 0.05 + sunAbove * 0.4;
+    this._ambient.intensity = 0.1 + sunAbove * 0.5;
+    _lightCol.copy(sky).lerp(_white, 0.45);
+    this._ambient.color.copy(_lightCol);                     // sky side: the sky colour, washed out
+    this._ambient.groundColor.setRGB(0.28, 0.3, 0.2).multiplyScalar(0.4 + this.daylight * 0.6); // earthy bounce
 
     // ── Sun ───────────────────────────────────────────────────────────────
     const sunVisible = hours >= 5 && hours <= 19;

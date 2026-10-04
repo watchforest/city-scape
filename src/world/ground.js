@@ -1,6 +1,10 @@
 import * as THREE from 'three';
-import { GRASS_COLOR, GROUND_SIDE_COLOR, TERRAIN_MAX_HEIGHT, PATH_COLOR } from '@/config.js';
+import {
+  GRASS_COLOR, GROUND_SIDE_COLOR, TERRAIN_MAX_HEIGHT, PATH_COLOR,
+  CLOUD_SHADOW_STRENGTH, CLOUD_SHADOW_SCALE, CLOUD_SHADOW_SPEED, CREST_SHADE,
+} from '@/config.js';
 import { getTerrainHeight, getGroundVariation } from './terrain.js';
+import { bakeContactShade } from './groundShade.js';
 import { getParkHalf } from './parkBounds.js';
 import { getLakeBedOffset } from './lake.js';
 
@@ -24,10 +28,22 @@ const PATH_MID_SHADE  = 1.12; // … and × this along the middle
  * coverage field is above a (noise-wobbled) threshold the grass is replaced by path colour,
  * lighter along the middle, with a little variation. One surface, so nothing can z-fight.
  */
-function _paintPaths(material, pathTexture, size) {
+// Driven from outside every frame (updateGroundShade) — the cloud shadows drift and fade with daylight.
+const _cloudUniforms = { cloudTime: { value: 0 }, cloudAmount: { value: 0 } };
+
+/** dt in seconds; daylight 0 (night) … 1 (noon). */
+export function updateGroundShade(dt, daylight) {
+  _cloudUniforms.cloudTime.value += dt;
+  _cloudUniforms.cloudAmount.value = daylight * CLOUD_SHADOW_STRENGTH;
+}
+
+function _paintPaths(material, pathTexture, shadeTexture, size) {
   const pathColor = new THREE.Color(PATH_COLOR);
   material.onBeforeCompile = (shader) => {
     shader.uniforms.pathMap   = { value: pathTexture };
+    shader.uniforms.shadeMap  = { value: shadeTexture };
+    shader.uniforms.cloudTime   = _cloudUniforms.cloudTime;
+    shader.uniforms.cloudAmount = _cloudUniforms.cloudAmount;
     shader.uniforms.pathMin   = { value: new THREE.Vector2(-size / 2, -size / 2) };
     shader.uniforms.pathSize  = { value: size };
     shader.uniforms.pathColor = { value: pathColor };
@@ -38,6 +54,9 @@ function _paintPaths(material, pathTexture, size) {
       .replace('#include <common>', `#include <common>
         varying vec2 vPathXZ;
         uniform sampler2D pathMap;
+        uniform sampler2D shadeMap;
+        uniform float cloudTime;
+        uniform float cloudAmount;
         uniform vec2 pathMin;
         uniform float pathSize;
         uniform vec3 pathColor;
@@ -56,6 +75,17 @@ function _paintPaths(material, pathTexture, size) {
           float grain = 0.93 + 0.14 * pathNoise(vPathXZ * 0.9);
           vec3 base = pathColor * mix(${PATH_EDGE_SHADE.toFixed(2)}, ${PATH_MID_SHADE.toFixed(2)}, pm.g) * grain;
           diffuseColor.rgb = mix(diffuseColor.rgb, base, cover);
+
+          // Contact shading under trees, benches and landmarks (baked, see groundShade.js).
+          vec2 shadeUv = (vPathXZ - pathMin) / pathSize;
+          float contact = texture2D(shadeMap, shadeUv).r;
+          diffuseColor.rgb *= mix(vec3(0.5, 0.58, 0.68), vec3(1.0), contact);
+
+          // Cloud shadows drifting over the park: large soft blotches, bluish and gone at night.
+          vec2 cp = vPathXZ * ${CLOUD_SHADOW_SCALE.toFixed(4)} - vec2(cloudTime * ${(CLOUD_SHADOW_SPEED * CLOUD_SHADOW_SCALE).toFixed(5)}, 0.0);
+          float cn = pathNoise(cp * 3.0) * 0.55 + pathNoise(cp * 7.0 + 11.3) * 0.3 + pathNoise(cp * 15.0 + 4.1) * 0.15;
+          float cloudShade = smoothstep(0.5, 0.68, cn) * cloudAmount;
+          diffuseColor.rgb *= vec3(1.0) - cloudShade * vec3(0.95, 0.8, 0.55);
         }`);
   };
 }
@@ -97,6 +127,13 @@ export function buildGround(scene, rand, pathTexture = null) {
       _col.lerp(COL_VAR, varT * varStrength);
     }
 
+    // Valleys darken, ridges lighten: compare the height with the average of four neighbours.
+    const R = CREST_SHADE.radius;
+    const crest = h - (getTerrainHeight(x + R, z) + getTerrainHeight(x - R, z) +
+                       getTerrainHeight(x, z + R) + getTerrainHeight(x, z - R)) / 4; // + = ridge, − = valley
+    const crestK = crest < 0 ? 1 + crest * CREST_SHADE.valley : 1 + crest * CREST_SHADE.ridge;
+    _col.multiplyScalar(Math.min(1.15, Math.max(0.65, crestK)));
+
     // Lake banks: sand around the waterline, darker mud on the bed below it.
     const lb = getLakeBedOffset(x, z);
     if (lb < -0.001) {
@@ -114,7 +151,7 @@ export function buildGround(scene, rand, pathTexture = null) {
   geo.computeVertexNormals();
 
   const mat  = new THREE.MeshLambertMaterial({ vertexColors: true });
-  if (pathTexture) _paintPaths(mat, pathTexture, SIZE);
+  if (pathTexture) _paintPaths(mat, pathTexture, bakeContactShade(SIZE / 2), SIZE);
   const mesh = new THREE.Mesh(geo, mat);
   mesh.receiveShadow = true;
   scene.add(mesh);

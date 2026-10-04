@@ -11,13 +11,15 @@ import { fitParkToNodes, getParkBounds, getParkHalf } from './world/parkBounds.j
 import { bakePathTexture } from './paths/pathTexture.js';
 import { computeFootprints } from './attractions/landmarkFit.js';
 import { buildAttractionMeshes, animateAttractions } from './attractions/AttractionPlacer.js';
-import { addLandmarkGlow } from './attractions/landmarkGlow.js';
 import { registerCircle, rasterizePathMeshes, registry } from './world/obstacleRegistry.js';
 import { loadData } from './data/loader.js';
 import { buildGraph } from './data/graphBuilder.js';
 import { createScene } from './world/scene.js';
 import { createCamera } from './world/camera.js';
-import { buildGround } from './world/ground.js';
+import { buildGround, updateGroundShade } from './world/ground.js';
+import { addContactShade } from './world/groundShade.js';
+import { buildSky } from './world/sky.js';
+import { buildBirds, buildDucks, updateWildlife } from './world/wildlife.js';
 import { setLake, buildWater, updateWater } from './world/lake.js';
 import { getTerrainHeight } from './world/terrain.js';
 import { buildEnvironment, findLakePosition } from './world/environment.js';
@@ -103,10 +105,14 @@ async function init() {
 
   // ── Environment ───────────────────────────────────────────────────────────
   const { lampHeadMat, lampHaloMat } = buildEnvironment(scene, projectNodes, navGraph, rand, renderedSegments, plazaRadius, lakePos);
-  buildGround(scene, rand, pathTexture);
+  for (const a of attractions) addContactShade(a.displayU, a.displayV, a.footprintRadius * 1.35, 0.4); // grounds the landmarks
+  buildGround(scene, rand, pathTexture); // bakes the contact shading, so register it first
+  buildSky(scene);
   buildWater(scene, getTerrainHeight);
   buildGrass(scene, rand);
   buildClouds(scene, rand);
+  buildBirds(scene, rand);
+  buildDucks(scene, rand);
 
   // ── Day/night cycle ───────────────────────────────────────────────────────
   const dayCycle = new DayCycle(scene);
@@ -114,7 +120,6 @@ async function init() {
 
   // ── Attractions ───────────────────────────────────────────────────────────
   const attractionMeshes = buildAttractionMeshes(scene, attractions, assetLibrary);
-  addLandmarkGlow(scene, attractions, lampHaloMat); // lit pools under the landmarks at night
 
   // ── Agents ────────────────────────────────────────────────────────────────
   let activeAgent = null;
@@ -129,7 +134,7 @@ async function init() {
       camController.zoomTo(
         { x: attraction.displayU, y: 0, z: attraction.displayV },
         landmarkFrameDistance(attraction),
-        { zoomOutHere: true },
+        { zoomOutHere: true, userOrbit: true },
       );
     }
   );
@@ -180,7 +185,7 @@ async function init() {
     (attraction) => {
       hideBubble();
       showProjectOverlay(attraction, personNodes, () => camController.zoomOut());
-      camController.zoomTo({ x: attraction.displayU, y: 0, z: attraction.displayV }, landmarkFrameDistance(attraction));
+      camController.zoomTo({ x: attraction.displayU, y: 0, z: attraction.displayV }, landmarkFrameDistance(attraction), { userOrbit: true });
     }
   );
 
@@ -225,6 +230,8 @@ async function init() {
     updateGrass(dt);
     updateClouds(dt);
     updateWater(dt);
+    updateGroundShade(dt, dayCycle.daylight);
+    updateWildlife(dt, dayCycle.daylight);
     dayCycle.update();
     updateBubblePosition();
     if (frameNo++ % SHADOW_UPDATE_EVERY === 0) renderer.shadowMap.needsUpdate = true;

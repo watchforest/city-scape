@@ -11,7 +11,7 @@ import { CAM_FRAME_FOLLOW } from '@/config.js';
  * Modes:
  *   'free'    — normal OrbitControls
  *   'zoomin'  — animating target + distance toward a selection
- *   'idle'    — arrived, holding on the selection
+ *   'idle'    — arrived, holding on the selection (OrbitControls handed back to the user if zoomTo asked for that)
  *   'follow'  — camera travels with a moving object each frame
  *   'zoomout' — animating back to the saved free position
  */
@@ -26,10 +26,14 @@ export class CameraController {
     this._followTarget = null;
     this._followDist = 0;
     this._zoomOutHere = false; // zoomOut() pulls back from the current target instead of returning to the saved view
+    this._userOrbit = false;   // hand the camera back to OrbitControls once arrived (landmarks)
+    this._dirFrom = new THREE.Vector3(); // zoomOut: view direction to turn from …
+    this._dirTo   = new THREE.Vector3(); // … and to
 
     this._dir = new THREE.Vector3(0, 1, 1).normalize(); // target -> camera
     this._savedTarget = controls.target.clone();
     this._savedDist   = cam.position.distanceTo(controls.target);
+    this._savedDir    = this._dir.clone();
 
     this._curTarget = controls.target.clone();
     this._curDist   = this._savedDist;
@@ -51,6 +55,7 @@ export class CameraController {
     if (this._mode === 'free') {
       this._savedTarget.copy(this._curTarget);
       this._savedDist = this._curDist;
+      this._savedDir.copy(this._dir);
     }
     this._controls.enabled = false;
   }
@@ -79,9 +84,13 @@ export class CameraController {
    * zoomOutHere: when the selection was reached by something other than the user
    * (an agent leading them to a landmark), the saved view is meaningless, so
    * zoomOut() pulls back from this target rather than flying to the saved view.
+   *
+   * userOrbit: once the camera has arrived, give control back to the user so they can turn
+   * it around the target themselves; zoomOut then flies back to the view the selection started from.
    */
-  zoomTo(worldPos, distance, { zoomOutHere = false } = {}) {
+  zoomTo(worldPos, distance, { zoomOutHere = false, userOrbit = false } = {}) {
     this._beginInteraction();
+    this._userOrbit = userOrbit;
     this._followTarget = null;
     this._zoomOutHere = zoomOutHere;
     this._startAnim(
@@ -104,11 +113,19 @@ export class CameraController {
   zoomOut() {
     if (this._mode === 'free') return;
     this._followTarget = null;
+    if (this._userOrbit) {
+      // The user may have turned, tilted, zoomed or panned: continue from where the camera is now.
+      this._userOrbit = false;
+      this._beginInteraction();
+    }
+    this._dirFrom.copy(this._dir);
+    this._dirTo.copy(this._zoomOutHere ? this._dir : this._savedDir);
     const target = this._zoomOutHere ? this._curTarget : this._savedTarget;
     this._startAnim(target, this._savedDist, 'zoomout');
   }
 
   release() {
+    this._userOrbit = false;
     this._mode = 'free';
     this._followTarget = null;
     this._zoomOutHere = false;
@@ -133,11 +150,16 @@ export class CameraController {
       const t = _easeInOut(Math.min(1, this._animT));
       this._curTarget.lerpVectors(this._fromTarget, this._toTarget, t);
       this._curDist = this._fromDist + (this._toDist - this._fromDist) * t;
+      if (this._mode === 'zoomout') this._dir.lerpVectors(this._dirFrom, this._dirTo, t).normalize();
       this._apply();
 
       if (this._animT >= 1) {
-        if (this._mode === 'zoomout') this.release();
-        else this._mode = 'idle';
+        if (this._mode === 'zoomout') {
+          this.release();
+        } else {
+          this._mode = 'idle';
+          if (this._userOrbit) this._controls.enabled = true; // from here on the user turns the camera
+        }
       }
     }
   }

@@ -17,8 +17,8 @@ export const CAM_DIST     = 400;   // for the reference-size park; scaled with t
 export const CAM_FRAME_PERSON    = 50;   // click an agent
 export const CAM_FRAME_PERSON_FROM_LIST = 115; // pick a team member from the overlay
 export const CAM_FRAME_FOLLOW    = 90;   // following a walking agent
-export const CAM_FRAME_LANDMARK_PER_RADIUS = 8; // landmark: distance = footprint radius × this …
-export const CAM_FRAME_LANDMARK_MIN        = 70; // … but never closer than this
+export const CAM_FRAME_LANDMARK_PER_RADIUS = 5; // landmark: distance = footprint radius × this …
+export const CAM_FRAME_LANDMARK_MIN        = 45; // … but never closer than this
 export const ISO_ELEVATION = Math.atan(1 / Math.sqrt(2)); // 35.264°
 
 // The park is sized from the landmark layout at startup (src/world/parkBounds.js).
@@ -37,6 +37,16 @@ export const PATH_COLOR  = 0x8B6914;
 export const SKY_DAY     = 0x87CEEB;
 export const SKY_DAWN    = 0xff7744;
 export const SKY_NIGHT   = 0x0a0a1a;
+
+// Shading (see world/groundShade.js, ground.js, sky.js)
+export const CONTACT_SHADE_TEX_SIZE = 2048; // resolution of the baked "ambient occlusion" texture on the ground
+export const CLOUD_SHADOW_STRENGTH  = 0.4; // how much the drifting cloud shadows darken the grass in daylight
+export const CLOUD_SHADOW_SCALE     = 0.008; // noise frequency: lower = bigger cloud shadows
+export const CLOUD_SHADOW_SPEED     = 6;     // world units/s the shadows drift (matches CLOUD_SPEED in clouds.js)
+export const CREST_SHADE            = { valley: 0.28, ridge: 0.12, radius: 7 }; // terrain: how strongly valleys darken / ridges lighten
+
+export const BIRD_COUNT = 4;  // gulls circling over the reference-size park (scaled with the park); they roost at night
+export const DUCK_COUNT = 5;   // ducks paddling on the lake
 
 export const GROUND_SIDE_COLOR = 0x5c3a1e;  // diorama box sides
 export const GRASS_PATCH_COLOR = 0x3d6b32;  // ground detail patches

@@ -17,6 +17,7 @@ import { getParkBounds, getParkHalf, getParkAreaScale } from './parkBounds.js';
 import { registerCircle, registerEllipse, isOccupied } from './obstacleRegistry.js';
 import { registerBench } from './benchRegistry.js';
 import { isOnPath } from '@/paths/pathTexture.js';
+import { addContactShade } from './groundShade.js';
 import { InstanceBatch } from '@/utils/InstanceBatch.js';
 import { getTerrainHeight } from './terrain.js';
 import { TERRAIN_MAX_HEIGHT } from '@/config.js';
@@ -44,7 +45,7 @@ const MAX_PINE_LAYER0  = 300;
 const MAX_PINE_LAYER1  = 300;
 const MAX_BIRCHES      = 200;
 const MAX_BUSHES       = 900;
-const MAX_FLOWERS      = 1800;
+const MAX_FLOWERS      = 4000;
 const MAX_BENCHES      = 200;
 const MAX_LAMPS        = 200;
 
@@ -52,17 +53,19 @@ const MAX_LAMPS        = 200;
 
 const MAT_TRUNK_DARK  = new THREE.MeshLambertMaterial({ color: 0x5c3a1e });
 const MAT_TRUNK_MED   = new THREE.MeshLambertMaterial({ color: 0x5c3a1e });
-const MAT_CROWN_CONE  = new THREE.MeshLambertMaterial({ color: 0x2d6a2d });
-const MAT_CROWN_ROUND = new THREE.MeshLambertMaterial({ color: 0x3a7a3a });
+// Foliage materials use vertexColors for the baked darker-underneath gradient (_shadeByHeight)
+const MAT_CROWN_CONE  = new THREE.MeshLambertMaterial({ color: 0x2d6a2d, vertexColors: true });
+const MAT_CROWN_ROUND = new THREE.MeshLambertMaterial({ color: 0x3a7a3a, vertexColors: true });
 const MAT_TRUNK_BIRCH = new THREE.MeshLambertMaterial({ color: 0xd8d4c8 });
-const MAT_CROWN_BIRCH = new THREE.MeshLambertMaterial({ color: 0x6fa83e });
-const MAT_BUSH        = new THREE.MeshLambertMaterial({ color: 0x356b2c });
+const MAT_CROWN_BIRCH = new THREE.MeshLambertMaterial({ color: 0x6fa83e, vertexColors: true });
+const MAT_BUSH        = new THREE.MeshLambertMaterial({ color: 0x356b2c, vertexColors: true });
 const MAT_FLOWER      = new THREE.MeshLambertMaterial({ color: 0xffffff });
-const MAT_PINE_L0     = new THREE.MeshLambertMaterial({ color: 0x2d6a2d });
-const MAT_PINE_L1     = new THREE.MeshLambertMaterial({ color: 0x246024 });
+const MAT_PINE_L0     = new THREE.MeshLambertMaterial({ color: 0x2d6a2d, vertexColors: true });
+const MAT_PINE_L1     = new THREE.MeshLambertMaterial({ color: 0x246024, vertexColors: true });
 const MAT_PLANK       = new THREE.MeshLambertMaterial({ color: 0x8B5e3c });
 const MAT_LEG         = new THREE.MeshLambertMaterial({ color: 0x5c3a1e });
-const MAT_POLE        = new THREE.MeshLambertMaterial({ color: 0x333333 });
+const MAT_BIN         = new THREE.MeshLambertMaterial({ color: 0x2f6b55, vertexColors: true });
+const MAT_POLE        =new THREE.MeshLambertMaterial({ color: 0x333333 });
 // MeshStandardMaterial so we can drive emissiveIntensity from dayCycle
 const MAT_LAMP_HEAD   = new THREE.MeshStandardMaterial({ color: 0xffffaa, emissive: new THREE.Color(0xffd97a), emissiveIntensity: 0 });
 
@@ -95,27 +98,49 @@ const MAT_LAMP_HALO = new THREE.MeshBasicMaterial({
 
 // ── Geometry (unit / canonical — scale applied per-instance via Matrix4) ──────
 
+/**
+ * Bake a vertical brightness gradient into a geometry's vertex colours (darker underneath,
+ * lighter on top), so foliage reads as a lit volume rather than a flat green blob. The
+ * material must have `vertexColors: true`; per-instance leaf tints still multiply on top.
+ */
+function _shadeByHeight(geo, bottom, top) {
+  geo.computeBoundingBox();
+  const { min, max } = geo.boundingBox;
+  const pos = geo.attributes.position;
+  const colors = new Float32Array(pos.count * 3);
+  for (let i = 0; i < pos.count; i++) {
+    const t = (pos.getY(i) - min.y) / (max.y - min.y);
+    const k = bottom + (top - bottom) * (t * t * (3 - 2 * t));
+    colors[i * 3] = colors[i * 3 + 1] = colors[i * 3 + 2] = k;
+  }
+  geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+  return geo;
+}
+
 // Cone tree
 const GEO_CONE_TRUNK  = new THREE.CylinderGeometry(0.25, 0.4, 1, 5);
-const GEO_CONE_CROWN  = new THREE.ConeGeometry(1, 1.6, 7);
+const GEO_CONE_CROWN  = _shadeByHeight(new THREE.ConeGeometry(1, 1.6, 7), 0.55, 1.1);
 
 // Round tree
 const GEO_ROUND_TRUNK = new THREE.CylinderGeometry(0.2, 0.35, 1, 5);
-const GEO_ROUND_CROWN = new THREE.SphereGeometry(1, 8, 6);
+const GEO_ROUND_CROWN = _shadeByHeight(new THREE.SphereGeometry(1, 8, 6), 0.55, 1.15);
 
 // Birch (thin trunk), bushes and flowers
 const GEO_BIRCH_TRUNK = new THREE.CylinderGeometry(0.14, 0.22, 1, 5);
-const GEO_BUSH        = new THREE.SphereGeometry(1, 7, 5);
+const GEO_BUSH        = _shadeByHeight(new THREE.SphereGeometry(1, 7, 5), 0.6, 1.15);
 const GEO_FLOWER      = new THREE.SphereGeometry(1, 5, 4);
 
 // Layered pine (unit trunk + unit cone layer reused for both layers)
 const GEO_PINE_TRUNK  = new THREE.CylinderGeometry(0.2, 0.35, 1, 5);
-const GEO_PINE_LAYER  = new THREE.ConeGeometry(1, 1.2, 6);
+const GEO_PINE_LAYER  = _shadeByHeight(new THREE.ConeGeometry(1, 1.2, 6), 0.6, 1.1);
 
 // Bench parts
 const GEO_BENCH_SEAT  = new THREE.BoxGeometry(3.5, 0.22, 1);
 const GEO_BENCH_BACK  = new THREE.BoxGeometry(3.5, 0.8, 0.18);
 const GEO_BENCH_LEG   = new THREE.BoxGeometry(0.22, 1.1, 1);
+
+// Litter bin: a tapered drum with a lid
+const GEO_BIN         = _shadeByHeight(new THREE.CylinderGeometry(0.38, 0.3, 1, 8), 0.7, 1.1);
 
 // Lamppost parts
 const GEO_LAMP_POLE   = new THREE.CylinderGeometry(0.15, 0.2, 8, 6);
@@ -173,6 +198,7 @@ function addConeTree(batches, x, z, ry, rand) {
   batches.trunk.add(_compose(x, gy + trunkH / 2, z, ry, 1, trunkH, 1));
 
   const crownCY = gy + trunkH + crownR * 0.7;
+  addContactShade(x, z, crownR * 1.5, 0.45);
   batches.crown.add(_compose(x, crownCY, z, ry, crownR, crownR * 1.6, crownR), _leafTint(rand, 0));
 }
 
@@ -187,6 +213,7 @@ function addRoundTree(batches, x, z, ry, rand) {
   batches.trunk.add(_compose(x, gy + trunkH / 2, z, ry, 1, trunkH, 1));
 
   const crownCY = gy + trunkH + crownR * 0.75;
+  addContactShade(x, z, crownR * 1.5, 0.5);
   batches.crown.add(_compose(x, crownCY, z, ry, crownR, crownR, crownR), _leafTint(rand, 0.3));
 }
 
@@ -198,6 +225,7 @@ function addBirch(batches, x, z, ry, rand) {
 
   batches.trunk.add(_compose(x, gy + trunkH / 2, z, ry, 0.8, trunkH, 0.8));
   const crownCY = gy + trunkH + crownR * 0.9;
+  addContactShade(x, z, crownR * 1.5, 0.35);
   batches.crown.add(_compose(x, crownCY, z, ry, crownR, crownR * 1.5, crownR), _leafTint(rand, 0.6));
 }
 
@@ -207,6 +235,7 @@ function addBush(batch, x, z, rand) {
   for (let i = 0; i < n; i++) {
     const bx = x + (rand() - 0.5) * 2.2, bz = z + (rand() - 0.5) * 2.2;
     const r  = 0.9 + rand() * 0.9;
+    addContactShade(bx, bz, r * 1.7, 0.3);
     batch.add(_compose(bx, getTerrainHeight(bx, bz) + r * 0.45, bz, rand() * Math.PI * 2, r, r * 0.7, r), _leafTint(rand, 0.2));
   }
 }
@@ -214,12 +243,12 @@ function addBush(batch, x, z, rand) {
 /** A patch of small flowers in one colour family. */
 function addFlowerPatch(batch, x, z, rand) {
   const colour = FLOWER_COLORS[Math.floor(rand() * FLOWER_COLORS.length)];
-  const n = 6 + Math.floor(rand() * 8);
+  const n = 9 + Math.floor(rand() * 10);
   for (let i = 0; i < n; i++) {
-    const a = rand() * Math.PI * 2, d = Math.sqrt(rand()) * 2.2;
+    const a = rand() * Math.PI * 2, d = Math.sqrt(rand()) * 2.8;
     const fx = x + Math.cos(a) * d, fz = z + Math.sin(a) * d;
     if (isOccupied(fx, fz, 0.3)) continue;
-    const s = 0.22 + rand() * 0.18;
+    const s = 0.4 + rand() * 0.3; // big enough to read from the default camera
     batch.add(_compose(fx, getTerrainHeight(fx, fz) + s * 0.8, fz, 0, s, s, s),
       colour.clone().multiplyScalar(0.85 + rand() * 0.3));
   }
@@ -241,6 +270,7 @@ function addLayeredPine(batches, x, z, ry, rand) {
   const h0 = r0 * 1.2;
   const y0 = gy + trunkH + h0 * 0.4;
   const tint = _leafTint(rand, 0);
+  addContactShade(x, z, r0 * 1.5, 0.5);
   batches.layer0.add(_compose(x, y0, z, ry, r0, h0, r0), tint);
 
   const r1 = r0 * 0.75;
@@ -251,8 +281,10 @@ function addLayeredPine(batches, x, z, ry, rand) {
 
 // ── Bench instance helper ─────────────────────────────────────────────────────
 
+let _benchCount = 0;
+
 /**
- * Add all four bench part instances for a single bench placement.
+ * Add all four bench part instances (plus a bin beside every second one) for a single bench placement.
  * @param {{ seat: InstanceBatch, back: InstanceBatch, leftLeg: InstanceBatch, rightLeg: InstanceBatch }} batches
  * @param {number} x
  * @param {number} z
@@ -277,6 +309,8 @@ function addBench(batches, x, z, facingAngle) {
     return new THREE.Matrix4().multiplyMatrices(benchRoot, localM);
   };
 
+  addContactShade(x, z, 3.2, 0.3);
+  if (_benchCount++ % 2 === 0) batches.bin.add(_localPart(2.3, 0.5, 0.15)); // a bin beside every second bench
   batches.seat.add(_localPart(0, 1.1, 0));
   batches.back.add(_localPart(0, 1.6, -0.42));
   batches.leftLeg.add(_localPart(-1.4, 0.55, 0));
@@ -515,6 +549,7 @@ export function buildEnvironment(scene, projectNodes, pathGraph, rand, pathSegme
     back:     new InstanceBatch(GEO_BENCH_BACK, MAT_PLANK, cap(MAX_BENCHES)),
     leftLeg:  new InstanceBatch(GEO_BENCH_LEG,  MAT_LEG,   cap(MAX_BENCHES)),
     rightLeg: new InstanceBatch(GEO_BENCH_LEG,  MAT_LEG,   cap(MAX_BENCHES)),
+    bin:      new InstanceBatch(GEO_BIN,        MAT_BIN,   cap(MAX_BENCHES)),
   };
 
   // Lampposts — pole + head + ground halo (no PointLights)
