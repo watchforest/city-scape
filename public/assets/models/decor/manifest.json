@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-10-04T22:20:54.607Z",
+  "generatedAt": "2026-10-04T23:02:38.016Z",
   "models": [
     {
       "id": "bird_01",
@@ -449,42 +449,6 @@
         7.43,
         11,
         7.76
-      ]
-    },
-    {
-      "id": "log_01",
-      "category": "log",
-      "file": "log/log_01.glb",
-      "tris": 249,
-      "parts": 2,
-      "size": [
-        1.05,
-        1.44,
-        6.02
-      ]
-    },
-    {
-      "id": "log_02",
-      "category": "log",
-      "file": "log/log_02.glb",
-      "tris": 210,
-      "parts": 2,
-      "size": [
-        0.92,
-        1.14,
-        5.96
-      ]
-    },
-    {
-      "id": "log_03",
-      "category": "log",
-      "file": "log/log_03.glb",
-      "tris": 250,
-      "parts": 2,
-      "size": [
-        1.14,
-        1.38,
-        4.76
       ]
     },
     {

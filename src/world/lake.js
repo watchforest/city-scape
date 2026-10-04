@@ -22,6 +22,10 @@ import { SEED, LAKE_SHALLOW_COLOR, LAKE_DEEP_COLOR, LAKE_FOAM_COLOR, DUCK_COUNT 
 
 const MAX_RIPPLES = Math.max(1, DUCK_COUNT); // ducks that ring the water (see setWaterRipple)
 const RIPPLE_REACH = 5.0;                    // how far a duck's rings spread
+const TRAIL_N = 14;                          // wake marks kept per duck (a ring buffer)
+const TRAIL_LIFE = 4.0;                      // seconds a mark takes to spread and fade
+const TRAIL_REACH = 2.6;                     // how big a mark grows
+export const TRAIL_EVERY = TRAIL_LIFE / TRAIL_N; // a swimming duck leaves a mark this often
 import { mulberry32 } from '@/utils/prng.js';
 
 // ── Basin shape ───────────────────────────────────────────────────────────────
@@ -120,7 +124,8 @@ const FRAG = /* glsl */`
   uniform vec3  uLightColor;  // colour * intensity of the direct light (for the glint)
   uniform vec3  uSkyColor;
   uniform float uLight;       // overall light level, matched to the Lambert-lit ground
-  uniform vec4  uRipples[${MAX_RIPPLES}];  // per duck: x, z, phase, active (0/1)
+  uniform vec4  uRipples[${MAX_RIPPLES}];  // per duck: x, z, phase, strength of its still-water rings (0–1)
+  uniform vec4  uTrail[${MAX_RIPPLES * TRAIL_N}];  // wake marks: x, z, birth time (uTime), strength
   varying vec3 vWorld;
 
   float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
@@ -148,8 +153,8 @@ const FRAG = /* glsl */`
     // is odd across a ring: outwards on its leading edge, inwards behind it).
     float ringLight = 0.0;
     for (int i = 0; i < ${MAX_RIPPLES}; i++) {
-      vec4 dk = uRipples[i];
-      if (dk.w < 0.5) continue;
+      vec4 dk = uRipples[i];                 // w = how strong the still-water rings are (1 at rest, fading out as the duck swims)
+      if (dk.w < 0.02) continue;
       vec2 dv = p - dk.xy;
       float d = length(dv);
       if (d > ${RIPPLE_REACH.toFixed(1)} + 1.0) continue;
@@ -158,10 +163,30 @@ const FRAG = /* glsl */`
         float age = fract(uTime * 0.28 + dk.z + float(k) / 3.0);          // 0 (just left the duck) … 1 (gone)
         float r = 0.7 + age * ${RIPPLE_REACH.toFixed(1)};
         float x = (d - r) * 2.4;
-        float ring = exp(-x * x) * (1.0 - age) * smoothstep(0.5, 1.2, d);
+        float ring = exp(-x * x) * (1.0 - age) * smoothstep(0.5, 1.2, d) * dk.w;
         slope += dir * x * ring * 0.5;
         ringLight += ring;
       }
+    }
+
+    // The wake: every so often a swimming duck leaves a mark where it was; each grows into a small ring and fades, and
+    // together they make the V of a trail behind it that bends when the duck turns. Marks of a duck that has stopped
+    // simply die out while its still-water rings come back.
+    for (int i = 0; i < ${MAX_RIPPLES * TRAIL_N}; i++) {
+      vec4 tr = uTrail[i];                   // x, z, birth time, strength
+      if (tr.w < 0.02) continue;
+      float age = (uTime - tr.z) / ${TRAIL_LIFE.toFixed(1)};
+      if (age < 0.0 || age > 1.0) continue;
+      vec2 dv = p - tr.xy;
+      float d = length(dv);
+      if (d > ${TRAIL_REACH.toFixed(1)} + 1.0) continue;
+      vec2 dir = dv / max(d, 0.001);
+      float r = 0.25 + age * ${TRAIL_REACH.toFixed(1)};
+      float x = (d - r) * 2.8;
+      float ring = exp(-x * x) * (1.0 - age) * (1.0 - age) * tr.w;
+      float core = exp(-d * d * 2.5) * (1.0 - age) * tr.w;      // a little foam right behind the duck
+      slope += dir * x * ring * 0.55;
+      ringLight += ring * 0.8 + core * 0.3;
     }
     vec3 N = normalize(vec3(slope.x, 1.0, slope.y));
 
@@ -249,6 +274,7 @@ export function buildWater(scene, heightAt) {
       uSkyColor:   { value: new THREE.Color(0x87ceeb) },
       uLight:      { value: 0.5 },
       uRipples:    { value: Array.from({ length: MAX_RIPPLES }, () => new THREE.Vector4(0, 0, 0, 0)) },
+      uTrail:      { value: Array.from({ length: MAX_RIPPLES * TRAIL_N }, () => new THREE.Vector4(0, 0, 0, 0)) },
     },
   });
 
@@ -264,10 +290,23 @@ export function buildWater(scene, heightAt) {
   return _water;
 }
 
-/** Put rings round duck number `i` (0 ≤ i < DUCK_COUNT) at world (x, z); `phase` (0–1) offsets its rings from the others'. */
-export function setWaterRipple(i, x, z, phase = 0) {
+/**
+ * Put rings round duck number `i` (0 ≤ i < DUCK_COUNT) at world (x, z); `phase` (0–1) offsets its rings from the
+ * others', `strength` (0–1) is how visible they are (a swimming duck has none: it has a wake instead, see setWaterTrail).
+ */
+export function setWaterRipple(i, x, z, phase = 0, strength = 1) {
   const r = _water?.material.uniforms.uRipples.value[i];
-  if (r) r.set(x, z, phase, 1);
+  if (r) r.set(x, z, phase, strength);
+}
+
+const _trailHead = new Array(MAX_RIPPLES).fill(0);
+
+/** Leave a wake mark for duck `i` at (x, z) (call every TRAIL_EVERY seconds while it swims); strength 0–1. */
+export function setWaterTrail(i, x, z, strength = 1) {
+  if (!_water) return;
+  const list = _water.material.uniforms.uTrail.value;
+  const k = _trailHead[i] = (_trailHead[i] + 1) % TRAIL_N;
+  list[i * TRAIL_N + k].set(x, z, _water.material.uniforms.uTime.value, strength);
 }
 
 /** Advance the ripple animation. */

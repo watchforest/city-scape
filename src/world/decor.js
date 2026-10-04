@@ -20,12 +20,12 @@ import { WIND_AMP } from '@/config.js';
 
 const EMPTY = () => ({
   tree: [], rock: [], grass: [], bench: [], lamp: [], bird: [],
-  bush: [], log: [], flower: [], mushroom: [], flowerpatch: [], ball: [], goal: [], butterfly: [],
+  bush: [], flower: [], mushroom: [], flowerpatch: [], ball: [], goal: [], butterfly: [],
 });
 
 // Faceted low-poly categories are shaded flat (their normals were dropped to allow simplification, see
 // splitDecor.mjs); the smooth ones (bench, lamp, ball, goal, flower patches) keep their normals.
-const FLAT = new Set(['tree', 'rock', 'grass', 'bush', 'log', 'flower', 'mushroom']);
+const FLAT = new Set(['tree', 'rock', 'grass', 'bush', 'flower', 'mushroom']);
 
 /**
  * Step 1 — before `library.preloadAll()`: fetch the manifest and register every model with the library,

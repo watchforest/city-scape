@@ -52,7 +52,6 @@ const CATEGORIES = {
   lamp:  { height: 8.6, maxTris: 1000, texture: 0 }, // not simplified: its 8-triangle glass would not survive
   // From the nature pack (flat-coloured materials, no textures). Its native sizes are used, times `scale`.
   bush:     { scale: 0.9, maxTris: 300, texture: 0, flat: true },
-  log:      { scale: 0.9, maxTris: 250, texture: 0, flat: true },   // fallen trunks
   flower:   { scale: 1.3, maxTris: 300, texture: 0, flat: true },
   mushroom: { scale: 1.6, maxTris: 130, texture: 0, flat: true },
   // Flower patches (textured, tiny in the source: ≈ 0.2 wide).
@@ -126,7 +125,7 @@ function natureModels(meshNodes) {
     if (parts.length) models.push({ id: `tree_n${t}`, category: 'tree', nodes: parts });
     // (The pack's stumps, `Tronco<t>.001`, are left out on purpose: the park should look alive.)
   }
-  models.push(...groupModels(meshNodes, /^Cylinder(\.\d+)?_\d+$/, 'log', 'log'));
+  // (The pack's fallen trunks, `Cylinder*`, are left out on purpose: the park should look alive.)
   models.push(...groupModels(meshNodes, /^rock\d_\d+$/, 'rock', 'rock_n', { scale: 1.5 }));   // (bigger than the pack's own scale: the other rocks are ≈ 2.4 across)
   models.push(...groupModels(meshNodes, /^bus[hf]F?\d_\d+$/, 'bush', 'bush'));                 // (the pack misspells one "busfF3")
   models.push(...groupModels(meshNodes, /^Flower\d(VAR)?_\d+$/, 'flower', 'flower'));

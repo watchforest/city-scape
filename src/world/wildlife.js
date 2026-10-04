@@ -9,7 +9,7 @@
 
 import * as THREE from 'three';
 import { clone as cloneSkinned } from 'three/addons/utils/SkeletonUtils.js';
-import { getLake, WATER_Y, setWaterRipple } from './lake.js';
+import { getLake, WATER_Y, setWaterRipple, setWaterTrail, TRAIL_EVERY } from './lake.js';
 import { getTerrainHeight } from './terrain.js';
 import { getParkHalf, getParkAreaScale } from './parkBounds.js';
 import { BIRD_COUNT, BIRD_SCALE, DUCK_COUNT, BUTTERFLY_COUNT, BUTTERFLY_SCALE } from '@/config.js';
@@ -168,19 +168,111 @@ function _buildDuck() {
 export function buildDucks(scene, rand) {
   const lake = getLake();
   if (!lake) return;
+  _duckRand = rand;
   for (let i = 0; i < DUCK_COUNT; i++) {
     const mesh = _buildDuck();
     scene.add(mesh);
+    // Start somewhere deep, not on top of another duck.
+    let p = null;
+    for (let tries = 0; tries < 40 && !p; tries++) {
+      const c = _randomDeepPoint(lake);
+      if (c && _ducks.every(o => Math.hypot(o.x - c.x, o.z - c.z) > DUCK_APART * 1.5)) p = c;
+    }
+    p ??= { x: lake.x, z: lake.z };
     _ducks.push({
-      mesh,
-      // Each duck drifts around its own ellipse inside the lake (well off the banks).
-      ax: lake.rx * (0.15 + 0.3 * rand()), az: lake.rz * (0.15 + 0.3 * rand()),
-      ox: (rand() - 0.5) * lake.rx * 0.25, oz: (rand() - 0.5) * lake.rz * 0.25,
-      angle: rand() * Math.PI * 2,
-      speed: (0.05 + rand() * 0.05) * (rand() < 0.5 ? 1 : -1),
-      bob: rand() * Math.PI * 2,
+      mesh, x: p.x, z: p.z, heading: rand() * Math.PI * 2, speed: 0, target: null,
+      idle: rand() * 4, wake: 0, trailT: 0, bob: rand() * Math.PI * 2, cruise: DUCK_SPEED * (0.8 + rand() * 0.4),
     });
   }
+}
+
+// ── Duck behaviour: paddle about on the spot for a while (rings spread from it), then swim to another part of the lake
+// (a wake trails behind it, and the rings fade out while it goes), then stop again. Ducks keep apart.
+
+let _duckRand = Math.random;
+const DUCK_SPEED = 1.5;      // swimming speed (units/s)
+const DUCK_APART = 2.6;      // ducks never get closer than this
+const DUCK_DEPTH = 0.7;      // stay where the water is at least this deep (off the banks)
+
+const _deep = (x, z) => getTerrainHeight(x, z) < WATER_Y - DUCK_DEPTH;
+
+function _randomDeepPoint(lake) {
+  for (let i = 0; i < 30; i++) {
+    const a = _duckRand() * Math.PI * 2, r = Math.sqrt(_duckRand());
+    const x = lake.x + Math.cos(a) * r * lake.rx, z = lake.z + Math.sin(a) * r * lake.rz;
+    if (_deep(x, z)) return { x, z };
+  }
+  return null;
+}
+
+/** A place to swim to: deep water all the way there, not near another duck's spot. */
+function _pickTarget(d, lake) {
+  for (let tries = 0; tries < 25; tries++) {
+    const c = _randomDeepPoint(lake);
+    if (!c) return null;
+    const dist = Math.hypot(c.x - d.x, c.z - d.z);
+    if (dist < 6) continue;
+    let clear = true;
+    for (let s = 1.5; s < dist && clear; s += 1.5) clear = _deep(d.x + (c.x - d.x) * s / dist, d.z + (c.z - d.z) * s / dist);
+    if (!clear || _ducks.some(o => o !== d && Math.hypot(o.x - c.x, o.z - c.z) < DUCK_APART * 1.5)) continue;
+    return c;
+  }
+  return null;
+}
+
+function _updateDuck(i, d, dt, lake) {
+  d.bob += dt * 2;
+  if (d.target) {
+    const dx = d.target.x - d.x, dz = d.target.z - d.z, dist = Math.hypot(dx, dz);
+    // Steer to the target, away from ducks that are close ahead.
+    let sx = dx / (dist || 1), sz = dz / (dist || 1);
+    for (const o of _ducks) {
+      if (o === d) continue;
+      const ox = d.x - o.x, oz = d.z - o.z, od = Math.hypot(ox, oz);
+      if (od < DUCK_APART * 2.2 && od > 1e-3) { const w = (1 - od / (DUCK_APART * 2.2)) * 1.8; sx += ox / od * w; sz += oz / od * w; }
+    }
+    const want = Math.atan2(sx, sz);
+    const diff = Math.atan2(Math.sin(want - d.heading), Math.cos(want - d.heading));
+    d.heading += Math.sign(diff) * Math.min(Math.abs(diff), 2.0 * dt);
+    // Speed up, and slow down for the last few units / when it has to turn hard.
+    const goal = d.cruise * Math.min(1, dist / 4) * (Math.abs(diff) > 1.0 ? 0.4 : 1);
+    d.speed += (goal - d.speed) * (1 - Math.exp(-2.5 * dt));
+    const nx = d.x + Math.sin(d.heading) * d.speed * dt, nz = d.z + Math.cos(d.heading) * d.speed * dt;
+    if (_deep(nx, nz)) { d.x = nx; d.z = nz; } else { d.target = null; }   // the bank: give up and stop here
+    if (dist < 1.0) d.target = null;
+    if (!d.target) d.idle = 2.5 + _duckRand() * 6;
+  } else {
+    d.speed += (0 - d.speed) * (1 - Math.exp(-3 * dt));
+    d.x += Math.sin(d.heading) * d.speed * dt; d.z += Math.cos(d.heading) * d.speed * dt;  // glide to a stop
+    d.heading += Math.sin(d.bob * 0.23 + i) * 0.1 * dt;                                   // idly turning on the spot
+    d.idle -= dt;
+    if (d.idle <= 0) d.target = _pickTarget(d, lake) ?? null, d.idle = d.target ? 0 : 3;
+  }
+
+  // Never overlap: push apart (the one that is swimming gives way less, so it does not get stuck).
+  for (const o of _ducks) {
+    if (o === d) continue;
+    const ox = d.x - o.x, oz = d.z - o.z, od = Math.hypot(ox, oz);
+    if (od < DUCK_APART && od > 1e-3) {
+      const push = (DUCK_APART - od) * 0.5;
+      const nx = d.x + ox / od * push, nz = d.z + oz / od * push;
+      if (_deep(nx, nz)) { d.x = nx; d.z = nz; }
+    }
+  }
+
+  // The wake takes over from the still-water rings as it starts to swim, and the other way round.
+  const swimming = d.speed > 0.35;
+  d.wake += ((swimming ? 1 : 0) - d.wake) * (1 - Math.exp(-dt / 0.45));
+  d.trailT += dt;
+  if (swimming && d.trailT >= TRAIL_EVERY) {
+    d.trailT = 0;
+    setWaterTrail(i, d.x - Math.sin(d.heading) * 0.7, d.z - Math.cos(d.heading) * 0.7, Math.min(1, d.speed / 1.0));
+  }
+
+  d.mesh.position.set(d.x, WATER_Y + 0.08 + Math.sin(d.bob) * 0.04, d.z);
+  d.mesh.rotation.y = d.heading;
+  d.mesh.rotation.z = Math.sin(d.bob * 0.7) * 0.04;
+  setWaterRipple(i, d.x, d.z, (i * 0.37) % 1, 1 - d.wake);
 }
 
 /**
@@ -200,20 +292,7 @@ export function prewarmWildlife(renderer, scene, camera) {
 /** @param {number} dt seconds  @param {number} daylight 0 (night) … 1 (day) */
 export function updateWildlife(dt, daylight) {
   const lake = getLake();
-  for (let i = 0; i < _ducks.length; i++) {
-    const d = _ducks[i];
-    d.angle += d.speed * dt;
-    d.bob += dt * 2;
-    const x = lake.x + d.ox + Math.cos(d.angle) * d.ax;
-    const z = lake.z + d.oz + Math.sin(d.angle) * d.az;
-    // Face the direction of travel (tangent of the ellipse).
-    const tx = -Math.sin(d.angle) * d.ax * Math.sign(d.speed);
-    const tz =  Math.cos(d.angle) * d.az * Math.sign(d.speed);
-    d.mesh.position.set(x, WATER_Y + 0.08 + Math.sin(d.bob) * 0.04, z);
-    d.mesh.rotation.y = Math.atan2(tx, tz);
-    d.mesh.rotation.z = Math.sin(d.bob * 0.7) * 0.04;
-    setWaterRipple(i, x, z, (i * 0.37) % 1); // rings round the duck (each duck its own phase)
-  }
+  for (let i = 0; i < _ducks.length; i++) _updateDuck(i, _ducks[i], Math.min(dt, 0.1), lake);
 
   const bright = daylight > 0.45;
   for (const b of _butterflies) {

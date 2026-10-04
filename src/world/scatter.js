@@ -116,23 +116,6 @@ export function scatterMushrooms(rand, variants, trees, { count }) {
   return [...batches.values()];
 }
 
-// ── Fallen logs ───────────────────────────────────────────────────────────────
-
-export function scatterLogs(rand, variants, { count, randomClear }) {
-  const batches = new Map(variants.map(v => [v.id, new VariantBatch(v, count)]));
-  for (let i = 0; i < count; i++) {
-    const pos = randomClear(rand, 4.5);
-    if (!pos) continue;
-    const v = pick(variants, rand), s = 0.9 + rand() * 0.6;
-    const ry = rand() * Math.PI;
-    // Lying on slopes: sunk a little so the downhill end isn't in the air.
-    batches.get(v.id).add(place(pos.x, getTerrainHeight(pos.x, pos.z) - 0.12 * s, pos.z, ry, s), tint(rand, 0.05));
-    addContactShade(pos.x, pos.z, 3.4 * s, 0.35);
-    registerCircle(pos.x, pos.z, 3.0 * s);
-  }
-  return [...batches.values()];
-}
-
 // ── The football pitch ────────────────────────────────────────────────────────
 
 /**
