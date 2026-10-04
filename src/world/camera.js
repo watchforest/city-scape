@@ -28,7 +28,7 @@ export function createCamera(renderer) {
   // Zoom toward the point under the cursor instead of the screen centre.
   controls.zoomToCursor = true;
   // Keep the camera from diving into the ground or drifting out of sight.
-  controls.minDistance = 25;
+  controls.minDistance = 12;
   controls.maxDistance = dist * 1.6;
 
   window.addEventListener('resize', () => {

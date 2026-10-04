@@ -14,11 +14,13 @@ export const CAM_DIST     = 400;   // for the reference-size park; scaled with t
 // Camera framing distances when a selection is focused (absolute world units, so
 // they don't depend on how far out the user was when they clicked). These match
 // the old "400 / zoom level" values at the default view.
-export const CAM_FRAME_PERSON    = 50;   // click an agent
-export const CAM_FRAME_PERSON_FROM_LIST = 115; // pick a team member from the overlay
-export const CAM_FRAME_FOLLOW    = 90;   // following a walking agent
-export const CAM_FRAME_LANDMARK_PER_RADIUS = 5; // landmark: distance = footprint radius × this …
-export const CAM_FRAME_LANDMARK_MIN        = 45; // … but never closer than this
+// Framing (see CameraController.frameFor): the "contain" distance shows the whole subject, and the comfortable
+// distance is that × a ratio. Landmarks use their bounding box; a person uses the numbers below.
+export const CAM_PERSON_RADIUS = 2.4;       // bounding radius of a person, head to toe
+export const CAM_PERSON_CENTRE = 2.0;       // height above the feet that the camera looks at
+export const CAM_PERSON_RATIO  = 3;         // click an agent: comfortable distance = contain × this
+export const CAM_PERSON_LIST_RATIO = 4.5;   // pick a team member from the overlay (a bit more context)
+export const CAM_FOLLOW_RATIO  = 8;         // following a walking agent
 export const ISO_ELEVATION = Math.atan(1 / Math.sqrt(2)); // 35.264°
 
 // The park is sized from the landmark layout at startup (src/world/parkBounds.js).
@@ -138,6 +140,9 @@ export const GATHER_JOIN_CHANCE   = 0.75; // each extra invitee accepts with thi
 // Chatting: who an agent seeks out when it decides to talk.
 export const CHAT_SEEK_RADIUS     = 45;   // free walkers within this can be invited
 // Conversation bubbles (ui/chatBubbles.js): one speaker at a time per conversation.
+export const CHAT_OWN_QUOTE_SHARE = 0.5;  // a person with quotes of their own (people.csv `quotes`) says one this often, else a shared one
+export const CHAT_BUBBLE_MAX_PERSON_RATIO = 3;    // a bubble is never taller on screen than this × the speaker's own height …
+export const CHAT_BUBBLE_MIN_SCALE        = 0.3;  // … and when that would shrink it below this fraction of full size (unreadable) it is not shown
 export const CHAT_BUBBLE_GAP      = 0.7;  // seconds of silence between two speakers
 export const CHAT_BUBBLE_CLEARANCE = 22;  // don't start a bubble within this (horizontal) distance of a visible one
 
