@@ -17,10 +17,18 @@ function _ensure() {
   return _el;
 }
 
+let _enabled = true;
+
+/** Turn the cursor label on or off (it is off while the always-on landmark labels are showing). */
+export function setHoverLabelEnabled(enabled) {
+  _enabled = enabled;
+  if (!enabled && _el) _el.style.display = 'none';
+}
+
 /** Show `text` at the cursor, or hide the label when `text` is null. */
 export function showHoverLabel(text, x, y) {
   const el = _ensure();
-  if (!text) { el.style.display = 'none'; return; }
+  if (!text || !_enabled) { el.style.display = 'none'; return; }
   if (el.textContent !== text) el.textContent = text;
   el.style.display = 'block';
   // Keep the tag on screen near the right/bottom edges.
