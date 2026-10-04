@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import {
-  SEED, MAX_FPS, SHADOW_UPDATE_EVERY, GATE_TEXT_DEFAULT, IDLE_CAMERA,
+  SEED, MAX_FPS, SHADOW_UPDATE_EVERY, GATE_TEXT_DEFAULT, GATE_BACK_TEXT_DEFAULT, IDLE_CAMERA,
   CAM_PERSON_RADIUS, CAM_PERSON_CENTRE, CAM_PERSON_RATIO, CAM_PERSON_LIST_RATIO, CAM_FOLLOW_RATIO,
 } from './config.js';
 import { mulberry32 } from './utils/prng.js';
@@ -40,6 +40,7 @@ import { initOverlay, showProjectOverlay, hideProjectOverlay } from './ui/overla
 import { initSpeechBubble, showPersonBubble, hideBubble, updateBubblePosition } from './ui/speechBubble.js';
 import { initSleepZs, updateSleepZs } from './ui/sleepZs.js';
 import { initLandmarkLabels, toggleLandmarkLabels, updateLandmarkLabels } from './ui/landmarkLabels.js';
+import { initHelpToggle } from './ui/helpToggle.js';
 import { initAgentLabels, toggleAgentLabels, updateAgentLabels } from './ui/agentLabels.js';
 import { initChatBubbles, updateChatBubbles } from './ui/chatBubbles.js';
 
@@ -120,7 +121,7 @@ async function init() {
 
   // ── Environment ───────────────────────────────────────────────────────────
   // The arch at the entrance path goes up first, so trees, lamps and benches keep out of its way.
-  const gateLamps = buildGate(scene, gate, site.gateText ?? GATE_TEXT_DEFAULT);
+  const gateLamps = buildGate(scene, gate, site.gateText ?? GATE_TEXT_DEFAULT, site.gateTextBack ?? GATE_BACK_TEXT_DEFAULT);
   const { lampHeadMat, pitch, flowerSpots, lamps, benches: benchSpots, pathSamples, plazas } = buildEnvironment(scene, projectNodes, navGraph, rand, renderedSegments, plazaRadius, lakePos, decor);
   for (const a of attractions) addContactShade(a.displayU, a.displayV, a.footprintRadius * 1.35, 0.4); // grounds the landmarks
   lamps.push(...gateLamps); // the arch's lanterns light the ground too
@@ -240,6 +241,7 @@ async function init() {
   );
 
   initLandmarkLabels(cam, renderer, attractionMeshes, project => picker.selectProject(project)); // L toggles project names over the landmarks (clickable)
+  initHelpToggle(); // the ? button / H hides the help text
   initAgentLabels(cam, renderer, agentController.getAgents(), agent => picker.selectAgent(agent)); // N toggles people's names (clickable)
   picker.registerAgents(agentController.getMeshes());
   picker.registerProjects(attractionMeshes.map(am => am.group));

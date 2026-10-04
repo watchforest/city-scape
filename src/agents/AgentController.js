@@ -26,6 +26,7 @@ import { AgentEntity } from './AgentEntity.js';
 import { isFreeWalker } from './crowd.js';
 import { GatheringManager } from './gatherings.js';
 import { setLandmarks, resolveCollisions } from './collision.js';
+import { setPlazas } from './plazas.js';
 import { ARRIVAL_WAVE_DURATION, MEET_RADIUS, MEET_CHANCE_PER_S, MEET_COOLDOWN } from '@/config.js';
 
 const GREETING_DURATION = 2.5;
@@ -44,6 +45,7 @@ export class AgentController {
     this._meetTimer = 0;
     this._gatherings = new GatheringManager(() => this._rand()); // chats and dances (gatherings.js)
     setLandmarks(attractions);
+    setPlazas(attractions);
 
     if (navGraph.nodes.length < 1) return; // (a single landmark has no paths: people just hang about it)
 

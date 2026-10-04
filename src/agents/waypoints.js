@@ -11,6 +11,9 @@
 
 import { dijkstraPath } from './pathfinding.js';
 
+import { plazaAt, plazaPoint } from './plazas.js';
+import { PLAZA_WANDER_CHANCE } from '@/config.js';
+
 // An agent this close to the end of a segment counts as standing at that segment's node (a plaza rim).
 const NODE_RADIUS = 12;
 // Weight of the path just walked when choosing the next one at a junction: low, so agents hardly ever turn straight back.
@@ -89,7 +92,15 @@ export function buildStrollWaypoints(pos, pathSegments, rand, memory, nodeMap) {
     const away = seg.edgeFromId === nodeId;                 // does the path start at this node?
     const pts = away ? seg.pts : [...seg.pts].reverse();
     towardId = away ? seg.edgeToId : seg.edgeFromId;
-    waypoints = [...arcAroundNode(nodeMap?.get(nodeId), pos, pts[0]), ...pts.map(p => ({ u: p.u, v: p.v }))];
+    // Often cross the open ring of the plaza first (1–3 stops between the landmark and the rim), instead of only skirting it.
+    const node = nodeMap?.get(nodeId);
+    const plaza = node ? plazaAt(node.u ?? node.x ?? 0, node.v ?? node.y ?? 0, 2) : null;
+    const stops = plaza && rand() < PLAZA_WANDER_CHANCE ? wanderStops(plaza, rand) : [];
+    const chain = [];
+    let cur = pos;
+    for (const s of stops) { chain.push(...arcAroundNode(node, cur, s), s); cur = s; }
+    chain.push(...arcAroundNode(node, cur, pts[0]));
+    waypoints = [...chain, ...pts.map(p => ({ u: p.u, v: p.v }))];
   } else {
     // ── Somewhere along a path: finish it ───────────────────────────────────────
     seg = seg0;
@@ -133,6 +144,18 @@ export function offsetToRight(wps, lane, { rampIn = 4, keepLast = false } = {}) 
 }
 
 const ARC_STEP = 6; // world units between waypoints on a plaza rim
+
+/** 1–3 points in the open ring of a plaza, each a good way round from the last, to walk through on the way. */
+function wanderStops(plaza, rand) {
+  const n = 1 + Math.floor(rand() * 3);
+  const stops = [];
+  let angle = rand() * Math.PI * 2;
+  for (let i = 0; i < n; i++) {
+    angle += 0.9 + rand() * 1.6;                                   // a different part of the plaza each time
+    stops.push(plazaPoint(plaza, rand, angle));
+  }
+  return stops;
+}
 
 /**
  * Waypoints along the shorter arc around `node` from `from` to `to` (both on its plaza rim),

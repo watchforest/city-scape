@@ -39,6 +39,7 @@ import { DancingState } from './states/DancingState.js';
 import { GatherState } from './states/GatherState.js';
 import { MeetingState } from './states/MeetingState.js';
 import { VisitingState } from './states/VisitingState.js';
+import { AdmiringState } from './states/AdmiringState.js';
 import { applyLampLight } from '@/world/lampLight.js';
 import { nameColorsFor } from '@/ui/agentColors.js';
 
@@ -157,6 +158,7 @@ export class AgentEntity extends YUKA.Vehicle {
     this.stateMachine.add('resting', new RestingOnGrassState({ pathSegments }));
     this.stateMachine.add('dancing', new DancingState());
     this.stateMachine.add('visiting', new VisitingState());
+    this.stateMachine.add('admiring', new AdmiringState());
     this.stateMachine.changeTo('walking');
   }
 

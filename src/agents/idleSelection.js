@@ -18,11 +18,12 @@
  */
 
 import {
-  PROB_WALK, PROB_CHAT, VISIT_CHANCE, VISIT_RADIUS, IDLE_WEIGHTS, NIGHT_WEIGHT_BOOST, CHAT_SEEK_RADIUS, GATHER_MAX_SIZE, GATHER_JOIN_CHANCE,
+  PROB_WALK, PROB_CHAT, ADMIRE_AT_PLAZA, VISIT_CHANCE, VISIT_RADIUS, IDLE_WEIGHTS, NIGHT_WEIGHT_BOOST, CHAT_SEEK_RADIUS, GATHER_MAX_SIZE, GATHER_JOIN_CHANCE,
   DANCE_GATHER_RADIUS, DANCE_START_CROWD, DANCE_CROWD_BOOST, DANCE_JOIN_CHANCE, BENCH_SOCIAL_RADIUS, BENCH_SOCIAL_BOOST, BENCH_JOIN_CHANCE,
 } from '@/config.js';
 import { nearby, isFreeWalker } from './crowd.js';
 import { isVisitable } from './states/VisitingState.js';
+import { plazaAt } from './plazas.js';
 import { lonelySitterNear } from '@/world/benchRegistry.js';
 
 /**
@@ -45,6 +46,9 @@ export function selectNextBehaviour(agent, allAgents, rand, night = 0) {
     if (sitters.length) return { kind: 'visiting', target: sitters[0] };
   }
 
+  // Standing at a plaza: stop and admire its landmark now and then.
+  if (plazaAt(agent.position.x, agent.position.z, 8) && rand() < ADMIRE_AT_PLAZA) return { kind: 'admiring' };
+
   const roll = rand();
 
   if (roll < PROB_WALK) return { kind: 'walking' };
@@ -58,7 +62,7 @@ export function selectNextBehaviour(agent, allAgents, rand, night = 0) {
   return pickIdleActivity(agent, allAgents, rand, night);
 }
 
-const IDLE_KINDS = { bench: 'sitting', ground: 'sittingGround', rest: 'resting', dance: 'dancing' };
+const IDLE_KINDS = { bench: 'sitting', ground: 'sittingGround', rest: 'resting', dance: 'dancing', admire: 'admiring' };
 
 /**
  * Free walkers near `agent` to invite, nearest first: the nearest always comes, each further

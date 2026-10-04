@@ -94,11 +94,12 @@ export const IDLE_CAMERA = {
   followTime: [18, 28], // seconds with one person
   followShare: 0.7,     // after following someone: chance of going on to someone else (otherwise a turn round the park)
   orbitSpeed: 1.0,      // OrbitControls autoRotateSpeed (2 = one turn in 30 s)
-  orbitZoom: 1.4,       // the turn round the park is this much further back than the plain overview, to see more of it at once
+  orbitZoom: 1.65,       // the turn round the park is this much further back than the plain overview, to see more of it at once
 };
 // The gate: an entrance path from the corner the camera starts over to the nearest part of the network, with an arch halfway.
 export const GATE_INSET       = 14;   // the path starts this far in from the corner's two edges
-export const GATE_TEXT_DEFAULT = 'Welcome'; // what the sign says unless site.json (gateText) sets it
+export const GATE_TEXT_DEFAULT = 'Welcome'; // what the sign says unless site.json (gateText) sets it …
+export const GATE_BACK_TEXT_DEFAULT = 'Thank you for visiting'; // … and its other side, seen on the way out (gateTextBack)
 export const BUTTERFLY_COUNT = 8;        // fluttering round the flower patches by day (scaled with the park)
 export const BUTTERFLY_SCALE = [0.6, 0.9]; // size multiplier on the baked model (≈1.5 wingspan)
 export const BIRD_SCALE = [4, 5]; // bird model size multiplier (the model has a 0.7 wingspan)
@@ -146,7 +147,14 @@ export const PROB_CHAT = 0.10;
 //   rest   — walk to grass beside a path and rest (Resting-1)
 //   dance  — dance on the spot (Dancing-1..3)
 // An unavailable choice (no free bench, no grass spot) falls back as noted in idleSelection.js.
-export const IDLE_WEIGHTS = { bench: 0.30, ground: 0.20, rest: 0.25, dance: 0.25 };
+export const IDLE_WEIGHTS = { bench: 0.30, ground: 0.20, rest: 0.25, dance: 0.25, admire: 0.15 };
+// Plazas: strolls may wander across the open ring of a plaza on the way, and people sometimes stop to admire the landmark.
+export const PLAZA_WANDER_CHANCE = 0.65;  // arriving at a plaza on a stroll: chance of crossing its open ring first (1–3 stops)
+export const ADMIRE_AT_PLAZA     = 0.22;  // finishing a stroll at a plaza: chance of stopping to admire its landmark
+export const ADMIRE_MIN = 7;              // seconds spent looking at it
+export const ADMIRE_MAX = 16;
+export const ADMIRE_RADIUS  = 70;         // a plaza this near (to its centre) is worth walking to
+export const ADMIRE_SPACING = 4.5;        // admirers keep this far apart
 export const DANCE_MIN = 12;  // a dance lasts this long once the dancers have all arrived
 export const DANCE_MAX = 24;
 
@@ -183,7 +191,7 @@ export const DANCE_JOIN_CHANCE   = 0.7;
 
 // Time of day: at night agents favour sitting and resting, by day dancing. 0 = no effect.
 // Applied as weight × (1 + boost × night), night = 0 (day) … 1 (full night).
-export const NIGHT_WEIGHT_BOOST = { bench: 0.8, ground: 0.8, rest: 0.8, dance: -0.7 };
+export const NIGHT_WEIGHT_BOOST = { bench: 0.8, ground: 0.8, rest: 0.8, dance: -0.7, admire: -0.3 };
 
 // Two walkers who pass close to each other may stop and wave (Waving-both-arms), and then
 // sometimes stand and talk.
