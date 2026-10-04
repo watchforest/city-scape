@@ -1,6 +1,6 @@
 /**
  * Loads people.csv, projects.csv and quotes.json from public/assets/data/.
- * Returns { people, projects, quotes }. `quotes` is the shared list of lines anyone can say (quotes.json, a string[]);
+ * Returns { people, projects, quotes, site }. `quotes` is the shared list of lines anyone can say (quotes.json, a string[]);
  * a person's own lines are the `quotes` column of people.csv (several separated by `;`) and are mixed in with it
  * (see ui/chatBubbles.js).
  * Falls back to empty arrays/objects if files are not found (PoC mode).
@@ -42,5 +42,7 @@ export async function loadData() {
     dir === 'assets/data/' ? {} : fetchJSON(assetUrl(`${dir}quotes.json`)),
   ]);
   const quotes = Array.isArray(ownQuotes) ? ownQuotes : await fetchJSON(assetUrl('assets/data/quotes.json'));
-  return { people, projects, quotes };
+  // Site settings (site.json, next to the CSVs): { "gateText": "…", "gate": true | false }. Test sets use their own or none.
+  const site = await fetchJSON(assetUrl(`${dir}site.json`));
+  return { people, projects, quotes, site: site && typeof site === 'object' && !Array.isArray(site) ? site : {} };
 }

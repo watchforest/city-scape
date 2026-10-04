@@ -253,3 +253,8 @@ export function renderPaths(routes, projectNodes, heightAt = () => 0) {
 }
 
 export { NAV_SAMPLE_STEP, PATH_WIDTH };
+
+/** A draped ribbon mesh for sample points { u, v, tu, tv, width } (used for the entrance path, paths/gatePath.js). */
+export function ribbonMesh(pts, heightAt) {
+  return Object.assign(new THREE.Mesh(_ribbonGeo(pts, heightAt), _mat()), { receiveShadow: true });
+}

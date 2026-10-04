@@ -22,9 +22,10 @@ import { buildRoutes }      from '../paths/PathRouter.js';
 import { renderPaths }      from '../paths/PathRenderer.js';
 import { buildNavGraph }    from '../paths/NavGraphBuilder.js';
 import { placeAttractions } from '../attractions/AttractionPlacer.js';
+import { planGatePath, addGatePath } from '../paths/gatePath.js';
 import { bakePathMask, getTerrainHeight } from './terrain.js';
 
-export function buildNavMesh(projectNodes, rand, affinityEdges = null, lakePos = null, footprints = new Map()) {
+export function buildNavMesh(projectNodes, rand, affinityEdges = null, lakePos = null, footprints = new Map(), withGate = true) {
   const routes = buildRoutes(projectNodes, rand, affinityEdges, footprints);
 
   // Bake the terrain flat-zone mask: ground stays level around landmarks, plazas and the
@@ -56,6 +57,10 @@ export function buildNavMesh(projectNodes, rand, affinityEdges = null, lakePos =
   // Terrain is final now: drape the path meshes over it.
   const rendered = renderPaths(routes, projectNodes, getTerrainHeight);
 
+  // The way in: a path from the park's gate to the nearest part of the network (drawn and kept clear, not walked).
+  const gate = withGate ? planGatePath(rendered.segments, projectNodes, routes.plazaRadius, routes.exclusionRadius, lakePos) : null;
+  if (gate) addGatePath(rendered, gate, getTerrainHeight);
+
   const navGraph   = buildNavGraph(routes, rendered.segments, projectNodes);
   const attractions = placeAttractions(projectNodes, routes, navGraph, rendered.segments, footprints);
 
@@ -67,5 +72,6 @@ export function buildNavMesh(projectNodes, rand, affinityEdges = null, lakePos =
     navGraph,
     attractions,
     plazaRadius:      routes.plazaRadius,
+    gate,                                // { entry, connect, dir, side, pts } or null (see paths/gatePath.js)
   };
 }
