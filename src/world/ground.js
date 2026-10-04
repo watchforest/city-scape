@@ -186,5 +186,29 @@ export function buildGround(scene, rand, pathTexture = null) {
   ring.receiveShadow = true;
   scene.add(ring);
 
+  // ── Skirt ────────────────────────────────────────────────────────────────────
+  // The grass edge follows the terrain but the ring sits at a fixed level, so wherever the edge is
+  // higher (or lower) than the ring there is a gap you can see the sky through. A wall from the grass
+  // edge down to the ring closes it; its vertices use the same grid as the ground mesh, so it meets it exactly.
+  const step = SIZE / SEGS, ringY = -BOX_SINK + 0.01;
+  const loop = []; // perimeter points in order
+  for (let k = 0; k < SEGS; k++) loop.push([-i + k * step, -i]);       // −z side, x rising
+  for (let k = 0; k < SEGS; k++) loop.push([i, -i + k * step]);        // +x side, z rising
+  for (let k = 0; k < SEGS; k++) loop.push([i - k * step, i]);         // +z side, x falling
+  for (let k = 0; k < SEGS; k++) loop.push([-i, i - k * step]);        // −x side, z falling
+  const skirtPos = [], skirtIdx = [];
+  loop.forEach(([x, z], n) => {
+    skirtPos.push(x, getTerrainHeight(x, z), z, x, ringY, z); // top, bottom
+    const a = n * 2, b = ((n + 1) % loop.length) * 2;
+    skirtIdx.push(a, a + 1, b, b, a + 1, b + 1);
+  });
+  const skirtGeo = new THREE.BufferGeometry();
+  skirtGeo.setAttribute('position', new THREE.Float32BufferAttribute(skirtPos, 3));
+  skirtGeo.setIndex(skirtIdx);
+  skirtGeo.computeVertexNormals();
+  const skirt = new THREE.Mesh(skirtGeo, new THREE.MeshLambertMaterial({ color: GROUND_SIDE_COLOR, side: THREE.DoubleSide }));
+  skirt.receiveShadow = true;
+  scene.add(skirt);
+
   return mesh;
 }
