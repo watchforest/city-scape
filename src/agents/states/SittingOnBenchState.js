@@ -16,7 +16,7 @@ import { REST_MIN, REST_MAX, SEATED_CHAT_MIN, SEATED_CHAT_EXTRA, BENCH_WAIT_EXTR
 // origin, with the legs stretched out forward. Lifting the mesh by seatTop + SEAT_CONTACT puts that point on the seat
 // top (a hair sunk in, so there is no gap). Measured with the skinned vertices of the seated pose.
 const SEAT_CONTACT = 0.17;
-const SIT_FORWARD  = 0.2;
+const SIT_FORWARD  = 0.85; // (0.2 put the back through the backrest)
 
 export class SittingOnBenchState extends SeekSpotState {
   stateId = 'sitting';
