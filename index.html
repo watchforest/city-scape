@@ -10,17 +10,32 @@
     canvas { display: block; }
     #hud {
       position: fixed;
-      bottom: 16px;
+      bottom: 14px;
       left: 16px;
-      color: rgba(255,255,255,0.5);
+      display: flex;
+      align-items: center;
+      gap: 8px;
       font: 11px/1.6 system-ui, sans-serif;
       pointer-events: none;
     }
+    /* The help text follows the day/night theme (dark by day, light at night) with a halo of the opposite tone so it reads over grass, sky and water alike. */
+    #hud .help {
+      color: var(--ui-text, rgba(255,255,255,0.8));
+      text-shadow: 0 0 3px var(--ui-bg, rgba(0,0,0,0.6)), 0 0 6px var(--ui-bg, rgba(0,0,0,0.6));
+      font-weight: 500;
+    }
+    #hud .help-toggle {
+      pointer-events: auto; cursor: pointer; width: 22px; height: 22px; border-radius: 50%; padding: 0; flex: none;
+      border: 1px solid var(--ui-border, #c8a850); background: var(--ui-bg, rgba(255,248,230,0.95)); color: var(--ui-text, #2d1a00);
+      font: 700 12px/1 system-ui, sans-serif; opacity: 0.85;
+    }
+    #hud.collapsed .help { display: none; }
   </style>
 </head>
 <body>
-  <div id="hud">
-    scroll: zoom &nbsp;|&nbsp; drag: rotate &nbsp;|&nbsp; right-drag / shift-drag: pan &nbsp;|&nbsp; T: cycle time of day &nbsp;|&nbsp; L: landmark labels &nbsp;|&nbsp; N: names &nbsp;|&nbsp; I: camera tour &nbsp;|&nbsp; F: follow
+  <div id="hud" class="collapsed">
+    <button class="help-toggle" type="button" title="Show or hide the help text (H)">?</button>
+    <span class="help">scroll: zoom &nbsp;|&nbsp; drag: rotate &nbsp;|&nbsp; right-drag / shift-drag: pan &nbsp;|&nbsp; T: cycle time of day &nbsp;|&nbsp; L: landmark labels &nbsp;|&nbsp; N: names &nbsp;|&nbsp; I: camera tour &nbsp;|&nbsp; F: follow &nbsp;|&nbsp; H: hide this</span>
   </div>
   <script type="module" src="/src/main.js"></script>
 </body>

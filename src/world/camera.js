@@ -64,7 +64,7 @@ export function createCamera(renderer, focus = null) {
   controls.zoomToCursor = true;
   // Keep the camera from diving into the ground or drifting out of sight.
   controls.minDistance = 12;
-  controls.maxDistance = dist * 1.6;
+  controls.maxDistance = dist * 2.4;   // (room for the camera tour, which backs off to see more of the park)
 
   window.addEventListener('resize', () => {
     cam.aspect = window.innerWidth / window.innerHeight;

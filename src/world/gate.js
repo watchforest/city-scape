@@ -43,9 +43,10 @@ function _signTexture(text, aspect) {
     }
     return size;
   };
+  const explicit = (text || '').split('\n').map(l => l.trim()).filter(Boolean);   // line breaks in the text are kept
   const words = (text || '').trim().split(/\s+/).filter(Boolean);
-  let lines = [words.join(' ')], size = fit(lines);
-  if (words.length > 2) {
+  let lines = explicit.length > 1 ? explicit : [words.join(' ')], size = fit(lines);
+  if (explicit.length <= 1 && words.length > 2) {
     // The split that makes the two lines most even.
     let best = null;
     for (let i = 1; i < words.length; i++) {
@@ -70,10 +71,11 @@ function _signTexture(text, aspect) {
 /**
  * @param {THREE.Scene} scene
  * @param {{ mid: {u, v}, dir: {u, v} } | null} plan  from planGatePath: the arch stands at `mid`, the path runs along `dir`
- * @param {string} text
+ * @param {string} text      the sign as seen from outside (the way in)
+ * @param {string} backText  the sign as seen from inside, on the way out ('\n' breaks the line)
  * @returns {{ x: number, z: number }[]} the lamp positions at the pillars (for the lamp light map)
  */
-export function buildGate(scene, plan, text) {
+export function buildGate(scene, plan, text, backText = '') {
   if (!plan) return [];
   const { mid, dir } = plan;                           // it stands halfway along the path
   const yaw = Math.atan2(-dir.u, -dir.v);              // local +Z = outwards, away from the park
@@ -84,10 +86,11 @@ export function buildGate(scene, plan, text) {
   const stone = new THREE.MeshLambertMaterial({ color: 0x9a948a, flatShading: true });
   const wood  = new THREE.MeshLambertMaterial({ color: 0x5a3b22, flatShading: true });
   const sign  = new THREE.MeshLambertMaterial({ map: _signTexture(text, GAP / PANEL_H) });
+  const signBack = new THREE.MeshLambertMaterial({ map: _signTexture(backText, GAP / PANEL_H) });
   const plain = new THREE.MeshLambertMaterial({ color: 0x1f3a2a });
-  for (const m of [stone, wood, sign, plain]) applyLampLight(m, 1);
+  for (const m of [stone, wood, sign, signBack, plain]) applyLampLight(m, 1);
   // Box faces: +x, −x, +y, −y, +z (outside), −z (inside)
-  const panelMats = [plain, plain, plain, plain, sign, sign];
+  const panelMats = [plain, plain, plain, plain, sign, signBack];
 
   const pillarX = GAP / 2 + PILLAR_W / 2;
   const lamps = [];
