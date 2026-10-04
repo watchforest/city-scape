@@ -14,18 +14,18 @@ import * as THREE from 'three';
 import { REED_COLOR } from '@/config.js';
 import { shorePoint, getLakeFootprint } from './lake.js';
 import { getParkBounds, getParkHalf, getParkAreaScale } from './parkBounds.js';
-import { registerCircle, registerEllipse, registerSolid, isOccupied } from './obstacleRegistry.js';
+import { registerCircle, registerEllipse, registerSolid, registerSolidSegment, isOccupied } from './obstacleRegistry.js';
 import { registerBench } from './benchRegistry.js';
 import { isOnPath } from '@/paths/pathTexture.js';
 import { addContactShade } from './groundShade.js';
-import { planPitch, buildPitch, scatterBushes, scatterFlowers, scatterMushrooms, scatterLogs } from './scatter.js';
+import { planPitch, buildPitch, scatterBushes, scatterFlowers, scatterMushrooms } from './scatter.js';
 import { InstanceBatch, VariantBatch } from '@/utils/InstanceBatch.js';
 import { getTerrainHeight } from './terrain.js';
 import {
   TERRAIN_MAX_HEIGHT, DECOR_TREE_FAMILIES, DECOR_TREE_SCALE, DECOR_TREE_DENSITY, DECOR_ROCK_SCATTER,
   DECOR_TREE_SIZE_BIAS, DECOR_GROVE_SIZE, DECOR_TREE_SQUASH, DECOR_ROCK_SCALE_BIG, DECOR_ROCK_SCALE_SMALL,
   DECOR_GROVES_PER_REF_PARK, DECOR_CONIFER_GROVE_SHARE, DECOR_GROVE_VARIANTS, DECOR_STRAY_CHANCE,
-  DECOR_BUSH_DENSITY, DECOR_MUSHROOM_GROUPS, DECOR_LOG_COUNT,
+  DECOR_BUSH_DENSITY, DECOR_MUSHROOM_GROUPS,
 } from '@/config.js';
 
 const TREE_DENSITY   = 180;  // trees for the reference-size park; scaled by park area
@@ -666,9 +666,9 @@ export function buildEnvironment(scene, projectNodes, pathGraph, rand, pathSegme
       addBench(benchBatches, x, z, facingAngle);
       registerCircle(x, z, benchFootprint);
       registerBench(x, z, facingAngle, ...benchSeat);
-      // Walkers go round it: three small circles along its length (small enough to leave the seat's stand point free).
-      const ax = Math.cos(facingAngle), az = -Math.sin(facingAngle), half = benchFootprint * 0.6;
-      for (const k of [-1, 0, 1]) registerSolid(x + ax * half * k, z + az * half * k, 0.6);
+      // Walkers go round it: a thin solid along its length (thin enough to leave the seat's stand point free).
+      const ax = Math.cos(facingAngle), az = -Math.sin(facingAngle), half = benchFootprint * 0.6 + 0.4;
+      registerSolidSegment(x - ax * half, z - az * half, x + ax * half, z + az * half, 0.6);
     });
   }
 
@@ -721,7 +721,6 @@ export function buildEnvironment(scene, projectNodes, pathGraph, rand, pathSegme
     }
   }
   if (decor?.mushroom?.length) scattered.push(...scatterMushrooms(rand, decor.mushroom, treeSpots, { count: Math.round(DECOR_MUSHROOM_GROUPS * area) }));
-  if (decor?.log?.length) scattered.push(...scatterLogs(rand, decor.log, { count: Math.round(DECOR_LOG_COUNT * area), randomClear: _randomClear }));
 
   // ── Rocks (boulder groups on steep slopes, loose rocks on flat ground) ─────
   _buildRocks(scene, rand, decor?.rock ?? []);

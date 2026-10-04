@@ -9,6 +9,9 @@ Open work, roughly in the order we plan to take it. Tick items off or delete the
 - [x] Sky and weather: butterflies round the flower patches, cloud shadows drawn from the real clouds (`clouds.js`), soft sky gradient with sun glow (`sky.js`). A distance haze was tried and reverted: not visible at these camera distances
 - [x] Wind sway on trees, bushes, flowers and grass (`world/wind.js`); lamp light from a baked light map (`world/lampLight.js`); lamps and benches spread over every path and plaza (`_placeProps` in `environment.js`)
 - [x] Sun shadows follow the wind (`customDepthMaterial` from `addWind`); ripples round the ducks (`setWaterRipple`)
+- [x] Ducks swim between spots with a wake that crossfades with their still-water rings, and never collide (`wildlife.js`, `lake.js`)
+- [x] A gate with a customisable sign (`site.json` → `gateText`) and an entrance path to the network (`paths/gatePath.js`, `world/gate.js`)
+- [ ] Let people (or visitors) walk in through the gate: its path is not in the nav graph yet
 - [ ] Cloud shadows only fall on the ground, not on trees
 - [ ] Water: ripples near the shore, a fountain on a plaza
 - [ ] Other datasets (`?data=<name>`, `npm run`-less: `node scripts/genTestData.mjs`; tried tiny/medium/large/huge/odd/single/empty): the huge set (80 landmarks, 400 people) is ~9M triangles / 2100 draw calls, mostly the characters (400 × 8.8k × 2 passes) — needs an agent level of detail (cheaper far characters, no shadow for far ones) before anything that size is used; a project with no members has no paths and sits alone; maybe warn in the console about people/projects that reference each other badly (unknown ids, empty projects)

@@ -27,9 +27,21 @@ const _solidGrid = new Map(); // "cx,cz" → [{ x, z, r }]
 const _cellKey = (cx, cz) => cx * 73856093 ^ cz * 19349663;
 
 export function registerSolid(x, z, r) {
-  const s = { x, z, r };
-  const cx0 = Math.floor((x - r) / SOLID_CELL), cx1 = Math.floor((x + r) / SOLID_CELL);
-  const cz0 = Math.floor((z - r) / SOLID_CELL), cz1 = Math.floor((z + r) / SOLID_CELL);
+  _addSolid({ x, z, r }, x - r, x + r, z - r, z + r);
+}
+
+/**
+ * A long solid: everything within `r` of the segment (ax, az)–(bx, bz) — a bench. (A row of circles made a trap: someone
+ * standing among overlapping circles was pushed back and forth between them and never got out.)
+ */
+export function registerSolidSegment(ax, az, bx, bz, r) {
+  _addSolid({ x: ax, z: az, bx, bz, r, seg: true },
+    Math.min(ax, bx) - r, Math.max(ax, bx) + r, Math.min(az, bz) - r, Math.max(az, bz) + r);
+}
+
+function _addSolid(s, x0, x1, z0, z1) {
+  const cx0 = Math.floor(x0 / SOLID_CELL), cx1 = Math.floor(x1 / SOLID_CELL);
+  const cz0 = Math.floor(z0 / SOLID_CELL), cz1 = Math.floor(z1 / SOLID_CELL);
   for (let cx = cx0; cx <= cx1; cx++) {
     for (let cz = cz0; cz <= cz1; cz++) {
       const k = _cellKey(cx, cz);

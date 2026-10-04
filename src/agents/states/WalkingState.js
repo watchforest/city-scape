@@ -46,11 +46,13 @@ export class WalkingState extends YUKA.State {
     agent.maxSpeed = sprinting ? agent._sprintSpeed : agent._baseSpeed;
     agent.steering.add(this._follow);
     agent.steering.add(this._pass);
+    this._probeT = 0; this._probePos = null; this._stuck = 0;
     this._startStroll(agent);
   }
 
   execute(agent) {
     if (agent.stopped) return;
+    this._unstick(agent);
 
     if (this._follow.path.finished() && this._atGoal(agent)) {
       if (agent.walkingToAttraction) {
@@ -96,6 +98,24 @@ export class WalkingState extends YUKA.State {
     const wps = this._follow.path._waypoints;
     const goal = wps[wps.length - 1];
     return !goal || Math.hypot(goal.x - agent.position.x, goal.z - agent.position.z) < GOAL_REACHED_DIST;
+  }
+
+  /**
+   * An agent that is trying to walk but is not getting anywhere (a waypoint behind a bench or a trunk, say) skips that
+   * waypoint after a couple of seconds, and plans a new stroll if that does not help either.
+   */
+  _unstick(agent) {
+    this._probeT = (this._probeT ?? 0) + (agent._lastDelta ?? 0.016);
+    if (this._probeT < 1) return;
+    this._probeT = 0;
+    const p = this._probePos, here = agent.position;
+    this._probePos = { x: here.x, z: here.z };
+    const trying = !this._follow.path.finished() && !agent.stopped;
+    const moved = p ? Math.hypot(here.x - p.x, here.z - p.z) : Infinity;
+    if (!trying || moved > 0.4) { this._stuck = 0; return; }
+    this._stuck = (this._stuck ?? 0) + 1;
+    if (this._stuck === 2) this._follow.path.advance();        // give up on this waypoint
+    else if (this._stuck >= 4) { this._stuck = 0; this._startStroll(agent); }
   }
 
   _startStroll(agent) {

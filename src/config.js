@@ -22,6 +22,7 @@ export const CAM_PERSON_RATIO  = 4.5;       // click an agent: comfortable dista
 export const CAM_PERSON_LIST_RATIO = 6;     // pick a team member from the overlay (a bit more context)
 export const CAM_FOLLOW_RATIO  = 11;        // following a walking agent (leading you to a project)
 export const ISO_ELEVATION = Math.atan(1 / Math.sqrt(2)); // 35.264°
+export const GATE_VIEW_ELEVATION = 0.5; // the opening view, when there is a gate: a bit lower (28.6°) than ISO_ELEVATION so the sign reads better
 
 // The park is sized from the landmark layout at startup (src/world/parkBounds.js).
 // REF_HALF is the original fixed half-size; prop densities and camera distance are
@@ -57,7 +58,6 @@ export const DECOR_TREE_FAMILIES = {
 // Scattered decor from the nature pack (world/scatter.js); counts are for the reference-size park and scale with its area.
 export const DECOR_BUSH_DENSITY     = 1.0;  // bushes per TREE_DENSITY
 export const DECOR_MUSHROOM_GROUPS  = 35;   // little mushroom groups at the foot of trees
-export const DECOR_LOG_COUNT        = 14;   // fallen logs
 // The football pitch: a mown square in front of the goal.
 export const PITCH_SIDE             = 30;   // side of the mown square
 export const PITCH_BALL_DISTANCE    = 9;    // the ball lies this far in front of the goal mouth
@@ -86,6 +86,19 @@ export const BIRD_COUNT = 5;  // birds circling over the reference-size park (sc
 export const LAMP_LIGHT = { radius: 22, gain: 2.2, texel: 0.6 }; // lamp light pool: radius (world units), brightness, world units per texel of the baked light map
 export const WIND_DIR = 0.6;     // direction the wind blows, radians in the XZ plane (x = cos, z = sin)
 export const WIND_AMP = { tree: 0.045, bush: 0.05, flower: 0.09, flowerpatch: 0.06, grass: 0.45 }; // top displacement ÷ height
+// Idle camera tour (interaction/idleCamera.js): after `delay` seconds without input (or the Tour button / I key) the camera
+// turns round the diorama or follows a random person for a while, then the next; any input flies it back to the opening view.
+export const IDLE_CAMERA = {
+  delay: 45,            // seconds without input before the tour starts by itself
+  orbitTime: [22, 32],  // seconds of turning round the diorama
+  followTime: [18, 28], // seconds with one person
+  followShare: 0.7,     // after following someone: chance of going on to someone else (otherwise a turn round the park)
+  orbitSpeed: 1.0,      // OrbitControls autoRotateSpeed (2 = one turn in 30 s)
+  orbitZoom: 1.4,       // the turn round the park is this much further back than the plain overview, to see more of it at once
+};
+// The gate: an entrance path from the corner the camera starts over to the nearest part of the network, with an arch halfway.
+export const GATE_INSET       = 14;   // the path starts this far in from the corner's two edges
+export const GATE_TEXT_DEFAULT = 'Welcome'; // what the sign says unless site.json (gateText) sets it
 export const BUTTERFLY_COUNT = 8;        // fluttering round the flower patches by day (scaled with the park)
 export const BUTTERFLY_SCALE = [0.6, 0.9]; // size multiplier on the baked model (≈1.5 wingspan)
 export const BIRD_SCALE = [4, 5]; // bird model size multiplier (the model has a 0.7 wingspan)

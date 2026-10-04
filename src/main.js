@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import {
-  SEED, MAX_FPS, SHADOW_UPDATE_EVERY,
+  SEED, MAX_FPS, SHADOW_UPDATE_EVERY, GATE_TEXT_DEFAULT, IDLE_CAMERA,
   CAM_PERSON_RADIUS, CAM_PERSON_CENTRE, CAM_PERSON_RATIO, CAM_PERSON_LIST_RATIO, CAM_FOLLOW_RATIO,
 } from './config.js';
 import { mulberry32 } from './utils/prng.js';
@@ -16,7 +16,7 @@ import { registerCircle, rasterizePathMeshes, registry } from './world/obstacleR
 import { loadData } from './data/loader.js';
 import { buildGraph } from './data/graphBuilder.js';
 import { createScene } from './world/scene.js';
-import { createCamera } from './world/camera.js';
+import { createCamera, makeDefaultCamera } from './world/camera.js';
 import { buildGround, updateGroundShade } from './world/ground.js';
 import { addContactShade } from './world/groundShade.js';
 import { buildSky } from './world/sky.js';
@@ -29,22 +29,25 @@ import { buildClouds, updateClouds, cloudState } from './world/clouds.js';
 import { buildGrass, updateGrass } from './world/grass.js';
 import { DayCycle } from './world/dayCycle.js';
 import { bakeLampLight } from './world/lampLight.js';
+import { buildGate, updateGate } from './world/gate.js';
 import { AssetLibrary } from './assets/AssetLibrary.js';
 import { registerAssets } from './assets/registry.js';
 import { AgentController } from './agents/AgentController.js';
 import { createPicker } from './interaction/picker.js';
 import { CameraController } from './interaction/cameraController.js';
+import { createIdleCamera } from './interaction/idleCamera.js';
 import { initOverlay, showProjectOverlay, hideProjectOverlay } from './ui/overlay.js';
 import { initSpeechBubble, showPersonBubble, hideBubble, updateBubblePosition } from './ui/speechBubble.js';
 import { initSleepZs, updateSleepZs } from './ui/sleepZs.js';
 import { initLandmarkLabels, toggleLandmarkLabels, updateLandmarkLabels } from './ui/landmarkLabels.js';
+import { initAgentLabels, toggleAgentLabels, updateAgentLabels } from './ui/agentLabels.js';
 import { initChatBubbles, updateChatBubbles } from './ui/chatBubbles.js';
 
 async function init() {
   const rand = mulberry32(SEED);
 
   // ── Data ──────────────────────────────────────────────────────────────────
-  const { people, projects, quotes } = await loadData();
+  const { people, projects, quotes, site } = await loadData();
 
   // ── Layout — baked offline via `npm run bake-layout` (see scripts/bakeLayout.mjs) ──
   // A project without a baked position (new data) — or any `?data=` test set, whose ids may coincide with the real ones —
@@ -96,7 +99,7 @@ async function init() {
   const lakePos = findLakePosition(projectNodes, routeSegments);
   setLake(lakePos);
 
-  const { pathMeshes, pathShapes, pathSegments, renderedSegments, navGraph, attractions, plazaRadius } = buildNavMesh(projectNodes, rand, affinityEdges, lakePos, footprints);
+  const { pathMeshes, pathShapes, pathSegments, renderedSegments, navGraph, attractions, plazaRadius, gate } = buildNavMesh(projectNodes, rand, affinityEdges, lakePos, footprints, site.gate !== false);
 
   // Rasterize all path meshes into occupancy grid — exact visual surface
   // (includes plaza discs, ribbon paths, junction discs)
@@ -108,7 +111,7 @@ async function init() {
   // ── Scene + camera ────────────────────────────────────────────────────────
   const { scene, renderer } = createScene();
   if (import.meta.env.DEV) window.__renderer = renderer; // dev only: inspect renderer.info from the console
-  const { cam, controls }   = createCamera(renderer);
+  const { cam, controls }   = createCamera(renderer, gate?.mid ?? null); // (the start view makes sure the gate is in the picture)
   const camController       = new CameraController(cam, controls, renderer.domElement);
 
   // The path meshes only feed the occupancy grid; the paths you see are painted onto the ground
@@ -116,8 +119,11 @@ async function init() {
   const pathTexture = bakePathTexture(pathShapes, getParkHalf());
 
   // ── Environment ───────────────────────────────────────────────────────────
+  // The arch at the entrance path goes up first, so trees, lamps and benches keep out of its way.
+  const gateLamps = buildGate(scene, gate, site.gateText ?? GATE_TEXT_DEFAULT);
   const { lampHeadMat, pitch, flowerSpots, lamps, benches: benchSpots, pathSamples, plazas } = buildEnvironment(scene, projectNodes, navGraph, rand, renderedSegments, plazaRadius, lakePos, decor);
   for (const a of attractions) addContactShade(a.displayU, a.displayV, a.footprintRadius * 1.35, 0.4); // grounds the landmarks
+  lamps.push(...gateLamps); // the arch's lanterns light the ground too
   buildGround(scene, rand, pathTexture, pitch); // bakes the contact shading, so register it first
   buildSky(scene);
   buildWater(scene, getTerrainHeight);
@@ -148,7 +154,7 @@ async function init() {
       frameLandmark(attraction, { zoomOutHere: true });
     }
   );
-  if (import.meta.env.DEV) Object.assign(window.__dbg ??= {}, { cam, controls, camController, agentController, scene, attractionMeshes, pathSegments, navGraph, pitch, flowerSpots, lamps, benchSpots, pathSamples, plazas, dayCycle, clouds: { update: updateClouds, state: cloudState } }); // dev only: poke at the scene from the console
+  if (import.meta.env.DEV) Object.assign(window.__dbg ??= {}, { cam, controls, camController, agentController, scene, attractionMeshes, pathSegments, navGraph, pitch, gate, idleCamera: () => idleCamera, flowerSpots, lamps, benchSpots, pathSamples, plazas, dayCycle, clouds: { update: updateClouds, state: cloudState } }); // dev only: poke at the scene from the console
   agentController.setRand(rand);
   agentController.setCamera(cam);
   agentController.setDismissCallback(() => { camController.zoomOut(); activeAgent = null; });
@@ -182,6 +188,17 @@ async function init() {
     return { x: p.x, y: p.y + CAM_PERSON_CENTRE, z: p.z };
   }
   const personFrame = ratio => camController.frameFor(CAM_PERSON_RADIUS, { comfortRatio: ratio });
+
+  // Idle tour: the camera turns round the park or follows people when nobody is touching anything (Tour button / I key).
+  camController.captureHome(); // the opening view, which any input flies back to
+  const idleCamera = createIdleCamera({
+    camController, controls,
+    getAgents: () => agentController.getAgents(),
+    followFrame: () => personFrame(CAM_FOLLOW_RATIO),
+    followHeight: CAM_PERSON_CENTRE,
+    orbitView: (() => { const p = makeDefaultCamera(window.innerWidth / window.innerHeight, null); // the turn is round the middle of the park
+      return { target: p.target, dist: p.distance * IDLE_CAMERA.orbitZoom, dir: p.cam.position.clone().sub(p.target).normalize() }; })(),
+  });
 
   // ── UI ────────────────────────────────────────────────────────────────────
   initOverlay(person => {
@@ -222,7 +239,8 @@ async function init() {
     }
   );
 
-  initLandmarkLabels(cam, renderer, attractionMeshes); // L toggles project names over the landmarks
+  initLandmarkLabels(cam, renderer, attractionMeshes, project => picker.selectProject(project)); // L toggles project names over the landmarks (clickable)
+  initAgentLabels(cam, renderer, agentController.getAgents(), agent => picker.selectAgent(agent)); // N toggles people's names (clickable)
   picker.registerAgents(agentController.getMeshes());
   picker.registerProjects(attractionMeshes.map(am => am.group));
 
@@ -230,6 +248,9 @@ async function init() {
   window.addEventListener('keydown', e => {
     if (e.key === 't' || e.key === 'T') {
       dayCycle.cyclePreset();
+    }
+    if (e.key === 'n' || e.key === 'N') {
+      toggleAgentLabels();
     }
     if (e.key === 'l' || e.key === 'L') {
       toggleLandmarkLabels();
@@ -266,6 +287,7 @@ async function init() {
     mark();
     controls.update();
     camController.update(dt);
+    idleCamera.update(dt);
     mark('camera');
     agentController.update(dt);
     mark('agents');
@@ -278,9 +300,11 @@ async function init() {
     updateGroundShade(dayCycle.daylight);
     updateWildlife(dt, dayCycle.daylight);
     dayCycle.update();
+    updateGate(dayCycle.night); // the sign's floodlights
     mark('world');
     updateBubblePosition();
     updateLandmarkLabels();
+    updateAgentLabels();
     mark('ui');
     if (frameNo++ % SHADOW_UPDATE_EVERY === 0) renderer.shadowMap.needsUpdate = true;
     renderer.render(scene, cam);

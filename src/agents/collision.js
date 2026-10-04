@@ -59,13 +59,22 @@ function pushOutOfSolids(agent) {
   const p = agent.position, body = AGENT_RADIUS * SOLID_BODY;
   forSolidsNear(p.x, p.z, s => {
     const reach = s.r + body;
-    let dx = p.x - s.x, dz = p.z - s.z;
+    // The nearest point of the solid: itself for a circle, the closest point on the segment for a bench.
+    let nx = s.x, nz = s.z;
+    if (s.seg) {
+      const ex = s.bx - s.x, ez = s.bz - s.z, len2 = ex * ex + ez * ez || 1;
+      const t = Math.max(0, Math.min(1, ((p.x - s.x) * ex + (p.z - s.z) * ez) / len2));
+      nx = s.x + ex * t; nz = s.z + ez * t;
+    }
+    let dx = p.x - nx, dz = p.z - nz;
     const d2 = dx * dx + dz * dz;
     if (d2 >= reach * reach) return;
     const d = Math.sqrt(d2);
-    if (d < 1e-3) { dx = 1; dz = 0; } else { dx /= d; dz /= d; }
-    p.x = s.x + dx * reach;
-    p.z = s.z + dz * reach;
+    if (d < 1e-3) {                                         // dead centre: out sideways (across a bench), else any way
+      if (s.seg) { const ex = s.bx - s.x, ez = s.bz - s.z, l = Math.hypot(ex, ez) || 1; dx = -ez / l; dz = ex / l; } else { dx = 1; dz = 0; }
+    } else { dx /= d; dz /= d; }
+    p.x = nx + dx * reach;
+    p.z = nz + dz * reach;
   });
 }
 
