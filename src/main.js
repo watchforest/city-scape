@@ -7,9 +7,11 @@ import { buildProjectEdges } from './layout/projectLayout.js';
 import { buildNavMesh } from './world/NavMesh.js';
 import { resolveModelUrl } from './assets/modelUrl.js';
 import { assetUrl } from './assets/assetUrl.js';
-import { fitParkToNodes, getParkBounds } from './world/parkBounds.js';
+import { fitParkToNodes, getParkBounds, getParkHalf } from './world/parkBounds.js';
+import { bakePathTexture } from './paths/pathTexture.js';
 import { computeFootprints } from './attractions/landmarkFit.js';
 import { buildAttractionMeshes, animateAttractions } from './attractions/AttractionPlacer.js';
+import { addLandmarkGlow } from './attractions/landmarkGlow.js';
 import { registerCircle, rasterizePathMeshes, registry } from './world/obstacleRegistry.js';
 import { loadData } from './data/loader.js';
 import { buildGraph } from './data/graphBuilder.js';
@@ -81,7 +83,7 @@ async function init() {
   const lakePos = findLakePosition(projectNodes, routeSegments);
   setLake(lakePos);
 
-  const { pathMeshes, pathSegments, renderedSegments, navGraph, attractions, plazaRadius } = buildNavMesh(projectNodes, rand, affinityEdges, lakePos, footprints);
+  const { pathMeshes, pathShapes, pathSegments, renderedSegments, navGraph, attractions, plazaRadius } = buildNavMesh(projectNodes, rand, affinityEdges, lakePos, footprints);
 
   // Rasterize all path meshes into occupancy grid — exact visual surface
   // (includes plaza discs, ribbon paths, junction discs)
@@ -95,11 +97,13 @@ async function init() {
   const { cam, controls }   = createCamera(renderer);
   const camController       = new CameraController(cam, controls);
 
-  for (const mesh of pathMeshes) scene.add(mesh);
+  // The path meshes only feed the occupancy grid; the paths you see are painted onto the ground
+  // from one baked texture, so overlapping paths merge cleanly instead of z-fighting.
+  const pathTexture = bakePathTexture(pathShapes, getParkHalf());
 
   // ── Environment ───────────────────────────────────────────────────────────
   const { lampHeadMat, lampHaloMat } = buildEnvironment(scene, projectNodes, navGraph, rand, renderedSegments, plazaRadius, lakePos);
-  buildGround(scene, rand);
+  buildGround(scene, rand, pathTexture);
   buildWater(scene, getTerrainHeight);
   buildGrass(scene, rand);
   buildClouds(scene, rand);
@@ -110,6 +114,7 @@ async function init() {
 
   // ── Attractions ───────────────────────────────────────────────────────────
   const attractionMeshes = buildAttractionMeshes(scene, attractions, assetLibrary);
+  addLandmarkGlow(scene, attractions, lampHaloMat); // lit pools under the landmarks at night
 
   // ── Agents ────────────────────────────────────────────────────────────────
   let activeAgent = null;

@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { GRASS_COLOR, GROUND_SIDE_COLOR, TERRAIN_MAX_HEIGHT } from '@/config.js';
+import { GRASS_COLOR, GROUND_SIDE_COLOR, TERRAIN_MAX_HEIGHT, PATH_COLOR } from '@/config.js';
 import { getTerrainHeight, getGroundVariation } from './terrain.js';
 import { getParkHalf } from './parkBounds.js';
 import { getLakeBedOffset } from './lake.js';
@@ -16,7 +16,51 @@ const COL_MUD  = new THREE.Color(0x3f4a38); // lake bed, seen through the shallo
 /** 0 at `from`, 1 at `to` (either order), clamped. */
 function _ramp(v, from, to) { const t = (v - from) / (to - from); return t < 0 ? 0 : t > 1 ? 1 : t; }
 
-export function buildGround(scene, rand) {
+const PATH_EDGE_SHADE = 0.74; // path colour × this at the edge …
+const PATH_MID_SHADE  = 1.12; // … and × this along the middle
+
+/**
+ * Paints the baked path texture (paths/pathTexture.js) onto the ground material: where the
+ * coverage field is above a (noise-wobbled) threshold the grass is replaced by path colour,
+ * lighter along the middle, with a little variation. One surface, so nothing can z-fight.
+ */
+function _paintPaths(material, pathTexture, size) {
+  const pathColor = new THREE.Color(PATH_COLOR);
+  material.onBeforeCompile = (shader) => {
+    shader.uniforms.pathMap   = { value: pathTexture };
+    shader.uniforms.pathMin   = { value: new THREE.Vector2(-size / 2, -size / 2) };
+    shader.uniforms.pathSize  = { value: size };
+    shader.uniforms.pathColor = { value: pathColor };
+    shader.vertexShader = shader.vertexShader
+      .replace('#include <common>', '#include <common>\nvarying vec2 vPathXZ;')
+      .replace('#include <begin_vertex>', '#include <begin_vertex>\nvPathXZ = position.xz;'); // mesh sits at the origin: local = world
+    shader.fragmentShader = shader.fragmentShader
+      .replace('#include <common>', `#include <common>
+        varying vec2 vPathXZ;
+        uniform sampler2D pathMap;
+        uniform vec2 pathMin;
+        uniform float pathSize;
+        uniform vec3 pathColor;
+        float pathHash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+        float pathNoise(vec2 p) {
+          vec2 i = floor(p), f = fract(p);
+          f = f * f * (3.0 - 2.0 * f);
+          return mix(mix(pathHash(i), pathHash(i + vec2(1.0, 0.0)), f.x),
+                     mix(pathHash(i + vec2(0.0, 1.0)), pathHash(i + vec2(1.0, 1.0)), f.x), f.y);
+        }`)
+      .replace('#include <color_fragment>', `#include <color_fragment>
+        {
+          vec4 pm = texture2D(pathMap, (vPathXZ - pathMin) / pathSize);
+          float wob = pathNoise(vPathXZ * 0.35) * 0.6 + pathNoise(vPathXZ * 1.3) * 0.4;
+          float cover = smoothstep(0.42, 0.58, pm.r + (wob - 0.5) * 0.3); // ragged, worn edge
+          float grain = 0.93 + 0.14 * pathNoise(vPathXZ * 0.9);
+          vec3 base = pathColor * mix(${PATH_EDGE_SHADE.toFixed(2)}, ${PATH_MID_SHADE.toFixed(2)}, pm.g) * grain;
+          diffuseColor.rgb = mix(diffuseColor.rgb, base, cover);
+        }`);
+  };
+}
+
+export function buildGround(scene, rand, pathTexture = null) {
   // ── Terrain grass plane (subdivided so it can deform) ───────────────────────
   const SIZE = getParkHalf() * 2;                // exactly the park, so the grass runs to the frame
   const SEGS = Math.max(40, Math.round(SIZE / 3));   // ~3 units per cell (fine enough for the lake banks)
@@ -70,6 +114,7 @@ export function buildGround(scene, rand) {
   geo.computeVertexNormals();
 
   const mat  = new THREE.MeshLambertMaterial({ vertexColors: true });
+  if (pathTexture) _paintPaths(mat, pathTexture, SIZE);
   const mesh = new THREE.Mesh(geo, mat);
   mesh.receiveShadow = true;
   scene.add(mesh);

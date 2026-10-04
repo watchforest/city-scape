@@ -29,15 +29,18 @@ export class InstanceBatch {
   /**
    * Set the next instance's transform from a pre-built Matrix4.
    * @param  {THREE.Matrix4} matrix4
+   * @param  {THREE.Color}   [color]  per-instance tint
    * @returns {number} The instance index that was set, or -1 if full.
    */
-  add(matrix4) {
+  add(matrix4, color = null) {
     if (this._count >= this._maxCount) {
       console.warn('[InstanceBatch] maxCount reached — instance skipped.');
       return -1;
     }
     const idx = this._count++;
     this._mesh.setMatrixAt(idx, matrix4);
+    // Optional per-instance tint: multiplies the material colour (values above 1 brighten).
+    if (color) this._mesh.setColorAt(idx, color);
     return idx;
   }
 
@@ -62,6 +65,7 @@ export class InstanceBatch {
   finalize(scene) {
     this._mesh.count = this._count;
     this._mesh.instanceMatrix.needsUpdate = true;
+    if (this._mesh.instanceColor) this._mesh.instanceColor.needsUpdate = true;
     scene.add(this._mesh);
   }
 

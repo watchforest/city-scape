@@ -60,7 +60,8 @@ export function buildNavMesh(projectNodes, rand, affinityEdges = null, lakePos =
   const attractions = placeAttractions(projectNodes, routes, navGraph, rendered.segments, footprints);
 
   return {
-    pathMeshes:       rendered.meshes,
+    pathMeshes:       rendered.meshes,   // occupancy only — never added to the scene
+    pathShapes:       rendered.shapes,   // painted onto the ground (paths/pathTexture.js)
     pathSegments:     rendered.segments,
     renderedSegments: rendered.renderedSegments,
     navGraph,

@@ -43,6 +43,64 @@ function _euclideanMST(nodes) {
 }
 
 
+// ── Thinning the network ──────────────────────────────────────────────────────
+
+/**
+ * Keeps only edges that read as one clean path each.
+ *
+ * Every shared-project pair used to get its own path, so the park filled up with paths that ran
+ * alongside each other, crossed, or passed right by a third landmark. An edge A–B is kept only
+ * if no other landmark lies inside the circle whose diameter is A–B (the Gabriel rule): such a
+ * trip is better made via that landmark, over paths it already has. Gabriel edges can never
+ * cross, and they always connect everything, so any pair the candidate list leaves disconnected
+ * is joined by the shortest Gabriel edges that bridge the gap.
+ *
+ * @param {ProjectNode[]} nodes
+ * @param {{i:number,j:number}[]} candidates  edges wanted by the social graph
+ * @returns {{i:number,j:number}[]}
+ */
+function _thinEdges(nodes, candidates) {
+  const dist2 = (a, b) => (a.layoutU - b.layoutU) ** 2 + (a.layoutV - b.layoutV) ** 2;
+  const isGabriel = (i, j) => {
+    const A = nodes[i], B = nodes[j];
+    const mu = (A.layoutU + B.layoutU) / 2, mv = (A.layoutV + B.layoutV) / 2;
+    const r2 = dist2(A, B) / 4;
+    for (let k = 0; k < nodes.length; k++) {
+      if (k === i || k === j) continue;
+      if ((nodes[k].layoutU - mu) ** 2 + (nodes[k].layoutV - mv) ** 2 < r2) return false;
+    }
+    return true;
+  };
+
+  const key = (i, j) => (i < j ? `${i}|${j}` : `${j}|${i}`);
+  const kept = [], have = new Set();
+  for (const e of candidates) {
+    if (e.i === e.j || have.has(key(e.i, e.j)) || !isGabriel(e.i, e.j)) continue;
+    have.add(key(e.i, e.j));
+    kept.push({ i: e.i, j: e.j });
+  }
+
+  // Union-find over what we kept, then bridge the remaining gaps with the shortest Gabriel edges.
+  const parent = nodes.map((_, i) => i);
+  const find = x => (parent[x] === x ? x : (parent[x] = find(parent[x])));
+  for (const { i, j } of kept) parent[find(i)] = find(j);
+
+  const spare = [];
+  for (let i = 0; i < nodes.length; i++) {
+    for (let j = i + 1; j < nodes.length; j++) {
+      if (!have.has(key(i, j)) && isGabriel(i, j)) spare.push({ i, j, d: dist2(nodes[i], nodes[j]) });
+    }
+  }
+  spare.sort((a, b) => a.d - b.d);
+  for (const { i, j } of spare) {
+    if (find(i) === find(j)) continue;
+    parent[find(i)] = find(j);
+    kept.push({ i, j });
+  }
+  return kept;
+}
+
+
 // ── Bypass geometry ───────────────────────────────────────────────────────────
 
 function _segmentClipsCircle(pu, pv, qu, qv, cu, cv, r) {
@@ -137,9 +195,17 @@ export function buildRoutes(projectNodes, rand, affinityEdges = null, footprints
 
   const allEdges = [...base, ...fallbackEdges];
 
-  // Degree per landmark
-  const degree = new Map(projectNodes.map(p => [p.id, 0]));
+  // How many connections each landmark has in the social graph: decides which ones get a plaza.
+  const wantedDegree = new Map(projectNodes.map(p => [p.id, 0]));
   for (const { i, j } of allEdges) {
+    wantedDegree.set(projectNodes[i].id, (wantedDegree.get(projectNodes[i].id) ?? 0) + 1);
+    wantedDegree.set(projectNodes[j].id, (wantedDegree.get(projectNodes[j].id) ?? 0) + 1);
+  }
+
+  // The paths actually built are a thinned network (see _thinEdges); `degree` counts those.
+  const routed = _thinEdges(projectNodes, allEdges);
+  const degree = new Map(projectNodes.map(p => [p.id, 0]));
+  for (const { i, j } of routed) {
     degree.set(projectNodes[i].id, (degree.get(projectNodes[i].id) ?? 0) + 1);
     degree.set(projectNodes[j].id, (degree.get(projectNodes[j].id) ?? 0) + 1);
   }
@@ -149,7 +215,7 @@ export function buildRoutes(projectNodes, rand, affinityEdges = null, footprints
   const plazaRadius = new Map();
   const exclusionRadius = new Map();
   for (const p of projectNodes) {
-    const deg = degree.get(p.id) ?? 0;
+    const deg = wantedDegree.get(p.id) ?? 0;
     const need = (footprints.get(p.id) ?? 0) + LANDMARK_CLEARANCE;
     plazaRadius.set(p.id, deg >= PLAZA_MIN_DEGREE
       ? Math.max(Math.min(PLAZA_RADIUS_BASE + (deg - PLAZA_MIN_DEGREE) * PLAZA_RADIUS_SCALE, PLAZA_RADIUS_MAX), need)
@@ -164,7 +230,7 @@ export function buildRoutes(projectNodes, rand, affinityEdges = null, footprints
   // Per-edge control points
   const edges = [];
 
-  for (const { i, j } of allEdges) {
+  for (const { i, j } of routed) {
     const A = projectNodes[i], B = projectNodes[j];
     if (!A || !B) continue;
 

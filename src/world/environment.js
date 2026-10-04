@@ -16,6 +16,7 @@ import { shorePoint, getLakeFootprint } from './lake.js';
 import { getParkBounds, getParkHalf, getParkAreaScale } from './parkBounds.js';
 import { registerCircle, registerEllipse, isOccupied } from './obstacleRegistry.js';
 import { registerBench } from './benchRegistry.js';
+import { isOnPath } from '@/paths/pathTexture.js';
 import { InstanceBatch } from '@/utils/InstanceBatch.js';
 import { getTerrainHeight } from './terrain.js';
 import { TERRAIN_MAX_HEIGHT } from '@/config.js';
@@ -30,6 +31,7 @@ const BENCH_SIDE_CLEAR  = 1.5;  // metres from the path edge to the bench centre
 const BENCH_PLAZA_GAP   = 2.5;  // distance from a plaza disc's edge to its benches
 const BENCH_FOOTPRINT   = 2.4;  // obstacle radius registered per bench (half its scaled length ≈ 2.45)
 const BENCH_PATH_GAP    = 1.0;  // a bench's centre must be at least this far outside any path surface
+const BENCH_PAINT_GAP   = 0.5;  // … and this far from anything painted as path/plaza on the ground (isOnPath)
 const LAMP_SIDE_CLEAR   = 3.0;
 const BENCH_SPACING     = 40;   // arc-length metres between benches
 const LAMP_SPACING      = 28;   // arc-length metres between lamps
@@ -40,6 +42,9 @@ const MAX_CONE_TREES   = 300;
 const MAX_ROUND_TREES  = 300;
 const MAX_PINE_LAYER0  = 300;
 const MAX_PINE_LAYER1  = 300;
+const MAX_BIRCHES      = 200;
+const MAX_BUSHES       = 900;
+const MAX_FLOWERS      = 1800;
 const MAX_BENCHES      = 200;
 const MAX_LAMPS        = 200;
 
@@ -49,6 +54,10 @@ const MAT_TRUNK_DARK  = new THREE.MeshLambertMaterial({ color: 0x5c3a1e });
 const MAT_TRUNK_MED   = new THREE.MeshLambertMaterial({ color: 0x5c3a1e });
 const MAT_CROWN_CONE  = new THREE.MeshLambertMaterial({ color: 0x2d6a2d });
 const MAT_CROWN_ROUND = new THREE.MeshLambertMaterial({ color: 0x3a7a3a });
+const MAT_TRUNK_BIRCH = new THREE.MeshLambertMaterial({ color: 0xd8d4c8 });
+const MAT_CROWN_BIRCH = new THREE.MeshLambertMaterial({ color: 0x6fa83e });
+const MAT_BUSH        = new THREE.MeshLambertMaterial({ color: 0x356b2c });
+const MAT_FLOWER      = new THREE.MeshLambertMaterial({ color: 0xffffff });
 const MAT_PINE_L0     = new THREE.MeshLambertMaterial({ color: 0x2d6a2d });
 const MAT_PINE_L1     = new THREE.MeshLambertMaterial({ color: 0x246024 });
 const MAT_PLANK       = new THREE.MeshLambertMaterial({ color: 0x8B5e3c });
@@ -94,6 +103,11 @@ const GEO_CONE_CROWN  = new THREE.ConeGeometry(1, 1.6, 7);
 const GEO_ROUND_TRUNK = new THREE.CylinderGeometry(0.2, 0.35, 1, 5);
 const GEO_ROUND_CROWN = new THREE.SphereGeometry(1, 8, 6);
 
+// Birch (thin trunk), bushes and flowers
+const GEO_BIRCH_TRUNK = new THREE.CylinderGeometry(0.14, 0.22, 1, 5);
+const GEO_BUSH        = new THREE.SphereGeometry(1, 7, 5);
+const GEO_FLOWER      = new THREE.SphereGeometry(1, 5, 4);
+
 // Layered pine (unit trunk + unit cone layer reused for both layers)
 const GEO_PINE_TRUNK  = new THREE.CylinderGeometry(0.2, 0.35, 1, 5);
 const GEO_PINE_LAYER  = new THREE.ConeGeometry(1, 1.2, 6);
@@ -109,6 +123,18 @@ const GEO_LAMP_HEAD   = new THREE.SphereGeometry(0.5, 6, 5);
 const GEO_LAMP_HALO   = new THREE.PlaneGeometry(28, 28); // ground light pool
 
 // ── Tree instance helpers ─────────────────────────────────────────────────────
+
+const FLOWER_COLORS = [0xf2f2f2, 0xf5d142, 0xe0508a, 0xb07be0, 0xf08a3c].map(c => new THREE.Color(c));
+
+/**
+ * Per-instance leaf tint (multiplies the crown material): lighter or darker, and shifted
+ * towards yellow by `warm` (0–1) so the park isn't one flat green.
+ */
+function _leafTint(rand, warm) {
+  const l = 0.78 + rand() * 0.5;
+  const y = rand() * warm;                       // yellow shift: more red, less blue
+  return new THREE.Color(l * (1 + y * 0.45), l * (1 + y * 0.1), l * (1 - y * 0.35));
+}
 
 // Reusable scratch objects to avoid per-instance allocation in tight loops.
 const _pos  = new THREE.Vector3();
@@ -147,7 +173,7 @@ function addConeTree(batches, x, z, ry, rand) {
   batches.trunk.add(_compose(x, gy + trunkH / 2, z, ry, 1, trunkH, 1));
 
   const crownCY = gy + trunkH + crownR * 0.7;
-  batches.crown.add(_compose(x, crownCY, z, ry, crownR, crownR * 1.6, crownR));
+  batches.crown.add(_compose(x, crownCY, z, ry, crownR, crownR * 1.6, crownR), _leafTint(rand, 0));
 }
 
 /**
@@ -161,7 +187,42 @@ function addRoundTree(batches, x, z, ry, rand) {
   batches.trunk.add(_compose(x, gy + trunkH / 2, z, ry, 1, trunkH, 1));
 
   const crownCY = gy + trunkH + crownR * 0.75;
-  batches.crown.add(_compose(x, crownCY, z, ry, crownR, crownR, crownR));
+  batches.crown.add(_compose(x, crownCY, z, ry, crownR, crownR, crownR), _leafTint(rand, 0.3));
+}
+
+/** Slender birch: pale trunk, tall narrow crown in a light fresh green (sometimes turning yellow). */
+function addBirch(batches, x, z, ry, rand) {
+  const gy     = getTerrainHeight(x, z);
+  const trunkH = 3 + rand() * 2.5;        // 3–5.5
+  const crownR = 2 + rand() * 1.2;        // 2–3.2
+
+  batches.trunk.add(_compose(x, gy + trunkH / 2, z, ry, 0.8, trunkH, 0.8));
+  const crownCY = gy + trunkH + crownR * 0.9;
+  batches.crown.add(_compose(x, crownCY, z, ry, crownR, crownR * 1.5, crownR), _leafTint(rand, 0.6));
+}
+
+/** A low bush: one to three squashed blobs. */
+function addBush(batch, x, z, rand) {
+  const n = 1 + Math.floor(rand() * 3);
+  for (let i = 0; i < n; i++) {
+    const bx = x + (rand() - 0.5) * 2.2, bz = z + (rand() - 0.5) * 2.2;
+    const r  = 0.9 + rand() * 0.9;
+    batch.add(_compose(bx, getTerrainHeight(bx, bz) + r * 0.45, bz, rand() * Math.PI * 2, r, r * 0.7, r), _leafTint(rand, 0.2));
+  }
+}
+
+/** A patch of small flowers in one colour family. */
+function addFlowerPatch(batch, x, z, rand) {
+  const colour = FLOWER_COLORS[Math.floor(rand() * FLOWER_COLORS.length)];
+  const n = 6 + Math.floor(rand() * 8);
+  for (let i = 0; i < n; i++) {
+    const a = rand() * Math.PI * 2, d = Math.sqrt(rand()) * 2.2;
+    const fx = x + Math.cos(a) * d, fz = z + Math.sin(a) * d;
+    if (isOccupied(fx, fz, 0.3)) continue;
+    const s = 0.22 + rand() * 0.18;
+    batch.add(_compose(fx, getTerrainHeight(fx, fz) + s * 0.8, fz, 0, s, s, s),
+      colour.clone().multiplyScalar(0.85 + rand() * 0.3));
+  }
 }
 
 /**
@@ -179,12 +240,13 @@ function addLayeredPine(batches, x, z, ry, rand) {
   const r0 = (2.5 + rand() * 1.5);        // 2.5–4
   const h0 = r0 * 1.2;
   const y0 = gy + trunkH + h0 * 0.4;
-  batches.layer0.add(_compose(x, y0, z, ry, r0, h0, r0));
+  const tint = _leafTint(rand, 0);
+  batches.layer0.add(_compose(x, y0, z, ry, r0, h0, r0), tint);
 
   const r1 = r0 * 0.75;
   const h1 = r1 * 1.2;
   const y1 = gy + (trunkH + h0 * 0.55) + h1 * 0.4;
-  batches.layer1.add(_compose(x, y1, z, ry, r1, h1, r1));
+  batches.layer1.add(_compose(x, y1, z, ry, r1, h1, r1), tint);
 }
 
 // ── Bench instance helper ─────────────────────────────────────────────────────
@@ -439,6 +501,14 @@ export function buildEnvironment(scene, projectNodes, pathGraph, rand, pathSegme
     layer1: new InstanceBatch(GEO_PINE_LAYER, MAT_PINE_L1,     cap(MAX_PINE_LAYER1)),
   };
 
+  const birchBatches = {
+    trunk: new InstanceBatch(GEO_BIRCH_TRUNK, MAT_TRUNK_BIRCH, cap(MAX_BIRCHES)),
+    crown: new InstanceBatch(GEO_ROUND_CROWN, MAT_CROWN_BIRCH, cap(MAX_BIRCHES)),
+  };
+  const bushBatch   = new InstanceBatch(GEO_BUSH,   MAT_BUSH,   cap(MAX_BUSHES));
+  const flowerBatch = new InstanceBatch(GEO_FLOWER, MAT_FLOWER, cap(MAX_FLOWERS));
+  flowerBatch.getMesh().castShadow = false; // too small to matter, and a lot of shadow-pass work
+
   // Benches — 4 parts
   const benchBatches = {
     seat:     new InstanceBatch(GEO_BENCH_SEAT, MAT_PLANK, cap(MAX_BENCHES)),
@@ -459,7 +529,7 @@ export function buildEnvironment(scene, projectNodes, pathGraph, rand, pathSegme
   for (const { x, z, facingAngle } of benchPoints) {
     // Check against the real path widths, not the 2-unit-cell path grid: that grid reaches ~2
     // units past the path edge, which would push benches away from it.
-    if (isOccupied(x, z, 2, true) || !_clearOfPaths(x, z, segs, BENCH_PATH_GAP)) continue;
+    if (isOccupied(x, z, 2, true) || !_clearOfPaths(x, z, segs, BENCH_PATH_GAP) || isOnPath(x, z, BENCH_PAINT_GAP)) continue;
     addBench(benchBatches, x, z, facingAngle);
     registerCircle(x, z, BENCH_FOOTPRINT);
     registerBench(x, z, facingAngle);
@@ -468,7 +538,7 @@ export function buildEnvironment(scene, projectNodes, pathGraph, rand, pathSegme
   // ── Lampposts (left side of path) ───────────────────────────────────────
   const lampPoints = _sampleAlongPaths(segs, LAMP_SPACING, -1, LAMP_SIDE_CLEAR);
   for (const { x, z } of lampPoints) {
-    if (isOccupied(x, z, 2)) continue;
+    if (isOccupied(x, z, 2) || isOnPath(x, z, 1)) continue;
     addLamppost(lampBatches, x, z);
     registerCircle(x, z, 1.0);
   }
@@ -488,7 +558,7 @@ export function buildEnvironment(scene, projectNodes, pathGraph, rand, pathSegme
         const angle = (i / lampCount) * Math.PI * 2;
         const x = cx + Math.cos(angle) * edgeR;
         const z = cz + Math.sin(angle) * edgeR;
-        if (isOccupied(x, z, 2)) continue;
+        if (isOccupied(x, z, 2) || isOnPath(x, z, 1)) continue;
         addLamppost(lampBatches, x, z);
         registerCircle(x, z, 1.0);
       }
@@ -496,7 +566,7 @@ export function buildEnvironment(scene, projectNodes, pathGraph, rand, pathSegme
         const angle = (i / benchCount) * Math.PI * 2 + Math.PI / benchCount; // offset from lamps
         const x = cx + Math.cos(angle) * edgeR;
         const z = cz + Math.sin(angle) * edgeR;
-        if (isOccupied(x, z, 2, true) || !_clearOfPaths(x, z, segs, BENCH_PATH_GAP)) continue;
+        if (isOccupied(x, z, 2, true) || !_clearOfPaths(x, z, segs, BENCH_PATH_GAP) || isOnPath(x, z, BENCH_PAINT_GAP)) continue;
         const facingAngle = Math.atan2(cx - x, cz - z); // face toward plaza centre
         addBench(benchBatches, x, z, facingAngle);
         registerCircle(x, z, BENCH_FOOTPRINT);
@@ -512,9 +582,22 @@ export function buildEnvironment(scene, projectNodes, pathGraph, rand, pathSegme
     if (!pos) continue;
     const ry   = rand() * Math.PI * 2;
     const pick = rand();
-    if (pick < 0.33)      addConeTree(coneBatches,   pos.x, pos.z, ry, rand);
-    else if (pick < 0.66) addRoundTree(roundBatches,  pos.x, pos.z, ry, rand);
-    else                  addLayeredPine(pineBatches,  pos.x, pos.z, ry, rand);
+    if (pick < 0.25)      addConeTree(coneBatches,   pos.x, pos.z, ry, rand);
+    else if (pick < 0.52) addRoundTree(roundBatches,  pos.x, pos.z, ry, rand);
+    else if (pick < 0.75) addLayeredPine(pineBatches,  pos.x, pos.z, ry, rand);
+    else                  addBirch(birchBatches,      pos.x, pos.z, ry, rand);
+  }
+
+  // ── Undergrowth: bushes and flower patches (small, so they don't block anyone) ──
+  const bushCount = Math.round(TREE_DENSITY * 1.6 * getParkAreaScale());
+  for (let i = 0; i < bushCount; i++) {
+    const pos = _randomClear(rand, 3);
+    if (pos) addBush(bushBatch, pos.x, pos.z, rand);
+  }
+  const flowerPatches = Math.round(TREE_DENSITY * 0.5 * getParkAreaScale());
+  for (let i = 0; i < flowerPatches; i++) {
+    const pos = _randomClear(rand, 3);
+    if (pos) addFlowerPatch(flowerBatch, pos.x, pos.z, rand);
   }
 
   // ── Rock outcroppings on steep slopes ───────────────────────────────────
@@ -524,6 +607,9 @@ export function buildEnvironment(scene, projectNodes, pathGraph, rand, pathSegme
   for (const b of Object.values(coneBatches))  b.finalize(scene);
   for (const b of Object.values(roundBatches)) b.finalize(scene);
   for (const b of Object.values(pineBatches))  b.finalize(scene);
+  for (const b of Object.values(birchBatches)) b.finalize(scene);
+  bushBatch.finalize(scene);
+  flowerBatch.finalize(scene);
   for (const b of Object.values(benchBatches)) b.finalize(scene);
   for (const b of Object.values(lampBatches))  b.finalize(scene);
 

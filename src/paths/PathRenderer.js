@@ -13,7 +13,6 @@
  */
 
 import * as THREE from 'three';
-import { PATH_COLOR } from '@/config.js';
 
 // ── Tunables ──────────────────────────────────────────────────────────────────
 const PATH_WIDTH       = 8;
@@ -24,23 +23,20 @@ const PLAZA_SEGMENTS   = 32;
 const MERGE_DIST       = PATH_WIDTH * 2.2; // centreline distance to consider "parallel & close"
 const MERGE_DOT        = 0.75;             // min |dot product| of tangents to be considered parallel
 const MAX_MERGED_WIDTH = PATH_WIDTH * 4;   // cap merged ribbon width
+const FAN_OUT_REACH    = PATH_WIDTH * 4;   // beyond a shared plaza's rim, edges from the same node still count as a fan-out
 
 // ── Material ──────────────────────────────────────────────────────────────────
 
+// The path meshes are NOT drawn: overlapping ribbons are coplanar and z-fight. They only feed
+// the occupancy grid (obstacleRegistry.rasterizePathMeshes). What the player sees is the path
+// texture baked from `shapes` (pathTexture.js) and painted onto the ground.
 function _mat() {
-  return new THREE.MeshLambertMaterial({
-    color: PATH_COLOR,
-    side: THREE.DoubleSide,
-    polygonOffset: true,
-    polygonOffsetFactor: -2,
-    polygonOffsetUnits: -4,
-  });
+  return new THREE.MeshBasicMaterial({ side: THREE.DoubleSide });
 }
 
 // ── Geometry helpers ──────────────────────────────────────────────────────────
 
-// Paths follow the terrain: every vertex is placed at the ground height plus this lift,
-// which keeps the ribbon above the (coarser) ground mesh between its vertices.
+// Paths follow the terrain: every vertex is placed at the ground height plus this lift.
 const PATH_LIFT = 0.12;
 
 function _discGeo(cu, cv, r, heightAt) {
@@ -55,7 +51,6 @@ function _discGeo(cu, cv, r, heightAt) {
   const g = new THREE.BufferGeometry();
   g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
   g.setIndex(idx);
-  g.computeVertexNormals();
   return g;
 }
 
@@ -76,7 +71,6 @@ function _ribbonGeo(pts, heightAt) {
   const g = new THREE.BufferGeometry();
   g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
   g.setIndex(idx);
-  g.computeVertexNormals();
   return g;
 }
 
@@ -141,11 +135,14 @@ export function renderPaths(routes, projectNodes, heightAt = () => 0) {
   const mat = _mat();
   const meshes = [];
   const segments = [];
+  // What the path texture is painted from: discs { u, v, r } and ribbons [{ u, v, width }].
+  const shapes = { discs: [], ribbons: [] };
 
   // ── Plaza discs ──────────────────────────────────────────────────────────
   for (const proj of projectNodes) {
     const r = plazaRadius.get(proj.id);
     if (!r) continue;
+    shapes.discs.push({ u: proj.layoutU, v: proj.layoutV, r });
     meshes.push(Object.assign(
       new THREE.Mesh(_discGeo(proj.layoutU, proj.layoutV, r, heightAt), mat),
       { receiveShadow: true }
@@ -157,6 +154,7 @@ export function renderPaths(routes, projectNodes, heightAt = () => 0) {
     if ((plazaRadius.get(proj.id) ?? 0) > 0) continue;
     const deg = degree.get(proj.id) ?? 0;
     if (deg >= 2) {
+      shapes.discs.push({ u: proj.layoutU, v: proj.layoutV, r: PATH_WIDTH * 0.5 });
       meshes.push(Object.assign(
         new THREE.Mesh(_discGeo(proj.layoutU, proj.layoutV, PATH_WIDTH * 0.5, heightAt), mat),
         { receiveShadow: true }
@@ -179,7 +177,48 @@ export function renderPaths(routes, projectNodes, heightAt = () => 0) {
   // where parallel sibling ribbons run close by.
   const rendered = []; // { pts } of edges whose ribbons have been drawn
 
+  // Edges leaving the same node run side by side for a while: that is a fan-out, not a parallel
+  // path, so near that node they must not count as siblings (it made blobs around plazas).
+  const nodePos = new Map(projectNodes.map(p => [p.id, p]));
+  const nearSharedNode = (pt, e, o) => {
+    for (const id of [e.fromId, e.toId]) {
+      if (id !== o.fromId && id !== o.toId) continue;
+      const n = nodePos.get(id);
+      if (!n) continue;
+      const reach = (plazaRadius.get(id) ?? 0) + FAN_OUT_REACH;
+      if ((pt.u - n.layoutU) ** 2 + (pt.v - n.layoutV) ** 2 < reach * reach) return true;
+    }
+    return false;
+  };
+
+  // ── What is painted on the ground ─────────────────────────────────────────
+  // Every path at its normal width: where paths overlap, the painted union merges them with no
+  // stepped widening. The strip of grass between two close, parallel paths is filled by a
+  // "bridge" ribbon running down the middle between them, as wide as the gap between their
+  // centrelines, so the merged band changes width smoothly with the distance.
   for (const { pts } of allSampled) {
+    shapes.ribbons.push(pts.map(({ u, v }) => ({ u, v, width: PATH_WIDTH })));
+  }
+  for (let i = 0; i < allSampled.length; i++) {
+    const a = allSampled[i];
+    for (let j = i + 1; j < allSampled.length; j++) {
+      const b = allSampled[j];
+      let chain = [];
+      const flush = () => { if (chain.length >= 2) shapes.ribbons.push(chain); chain = []; };
+      for (const pt of a.pts) {
+        let best = null, bestD2 = MERGE_DIST * MERGE_DIST;
+        for (const op of b.pts) {
+          const d2 = (pt.u - op.u) ** 2 + (pt.v - op.v) ** 2;
+          if (d2 < bestD2 && Math.abs(pt.tu * op.tu + pt.tv * op.tv) > MERGE_DOT) { bestD2 = d2; best = op; }
+        }
+        if (!best || nearSharedNode(pt, a.edge, b.edge)) { flush(); continue; }
+        chain.push({ u: (pt.u + best.u) / 2, v: (pt.v + best.v) / 2, width: Math.sqrt(bestD2) });
+      }
+      flush();
+    }
+  }
+
+  for (const { edge, pts } of allSampled) {
     // Check if this edge is >70% absorbed by already-rendered ribbons
     let absorbed = 0;
     for (const pt of pts) {
@@ -198,8 +237,9 @@ export function renderPaths(routes, projectNodes, heightAt = () => 0) {
     // Build per-point widths: for each sample, count parallel siblings nearby
     const widePts = pts.map(pt => {
       let extraWidth = 0;
-      for (const { pts: other } of allSampled) {
+      for (const { edge: otherEdge, pts: other } of allSampled) {
         if (other === pts) continue;
+        if (nearSharedNode(pt, edge, otherEdge)) continue;
         for (const op of other) {
           const d2 = (pt.u - op.u)**2 + (pt.v - op.v)**2;
           if (d2 < MERGE_DIST * MERGE_DIST) {
@@ -228,7 +268,7 @@ export function renderPaths(routes, projectNodes, heightAt = () => 0) {
     pts:        r.widePts,  // includes .width per point
   }));
 
-  return { meshes, segments, renderedSegments };
+  return { meshes, segments, renderedSegments, shapes };
 }
 
 export { NAV_SAMPLE_STEP, PATH_WIDTH };
