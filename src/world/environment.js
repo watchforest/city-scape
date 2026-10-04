@@ -18,12 +18,14 @@ import { registerCircle, registerEllipse, isOccupied } from './obstacleRegistry.
 import { registerBench } from './benchRegistry.js';
 import { isOnPath } from '@/paths/pathTexture.js';
 import { addContactShade } from './groundShade.js';
-import { InstanceBatch } from '@/utils/InstanceBatch.js';
+import { planPitch, buildPitch, scatterBushes, scatterFlowers, scatterMushrooms, scatterLogs } from './scatter.js';
+import { InstanceBatch, VariantBatch } from '@/utils/InstanceBatch.js';
 import { getTerrainHeight } from './terrain.js';
 import {
-  TERRAIN_MAX_HEIGHT, DECOR_TREE_FAMILIES, DECOR_TREE_SCALE, DECOR_TREE_DENSITY, DECOR_ROCK_SCATTER, DECOR_STUMP_COUNT,
+  TERRAIN_MAX_HEIGHT, DECOR_TREE_FAMILIES, DECOR_TREE_SCALE, DECOR_TREE_DENSITY, DECOR_ROCK_SCATTER,
   DECOR_TREE_SIZE_BIAS, DECOR_GROVE_SIZE, DECOR_TREE_SQUASH, DECOR_ROCK_SCALE_BIG, DECOR_ROCK_SCALE_SMALL,
-  DECOR_GROVES_PER_REF_PARK, DECOR_CONIFER_GROVE_SHARE, DECOR_GROVE_VARIANTS, DECOR_STRAY_CHANCE, DECOR_DEAD_CHANCE,
+  DECOR_GROVES_PER_REF_PARK, DECOR_CONIFER_GROVE_SHARE, DECOR_GROVE_VARIANTS, DECOR_STRAY_CHANCE,
+  DECOR_BUSH_DENSITY, DECOR_MUSHROOM_GROUPS, DECOR_LOG_COUNT,
 } from '@/config.js';
 
 const TREE_DENSITY   = 180;  // trees for the reference-size park; scaled by park area
@@ -83,33 +85,6 @@ const MAT_POLE        =new THREE.MeshLambertMaterial({ color: 0x333333 });
 // MeshStandardMaterial so we can drive emissiveIntensity from dayCycle
 const MAT_LAMP_HEAD   = new THREE.MeshStandardMaterial({ color: 0xffffaa, emissive: new THREE.Color(0xffd97a), emissiveIntensity: 0 });
 
-// Radial gradient texture for ground halo — generated once via canvas
-function _makeHaloTexture() {
-  const size = 128;
-  const canvas = document.createElement('canvas');
-  canvas.width = canvas.height = size;
-  const ctx = canvas.getContext('2d');
-  const grad = ctx.createRadialGradient(size/2, size/2, 0, size/2, size/2, size/2);
-  grad.addColorStop(0,   'rgba(255, 220, 100, 0.45)');
-  grad.addColorStop(0.4, 'rgba(255, 200,  60, 0.15)');
-  grad.addColorStop(1,   'rgba(255, 180,   0, 0)');
-  ctx.fillStyle = grad;
-  ctx.fillRect(0, 0, size, size);
-  const tex = new THREE.CanvasTexture(canvas);
-  return tex;
-}
-
-const MAT_LAMP_HALO = new THREE.MeshBasicMaterial({
-  map: _makeHaloTexture(),
-  transparent: true,
-  depthWrite: false,
-  blending: THREE.AdditiveBlending,
-  polygonOffset: true,
-  polygonOffsetFactor: -2,
-  polygonOffsetUnits: -2,
-  opacity: 0,
-});
-
 // ── Geometry (unit / canonical — scale applied per-instance via Matrix4) ──────
 
 /**
@@ -159,7 +134,6 @@ const GEO_BIN         = _shadeByHeight(new THREE.CylinderGeometry(0.38, 0.3, 1, 
 // Lamppost parts
 const GEO_LAMP_POLE   = new THREE.CylinderGeometry(0.15, 0.2, 8, 6);
 const GEO_LAMP_HEAD   = new THREE.SphereGeometry(0.5, 6, 5);
-const GEO_LAMP_HALO   = new THREE.PlaneGeometry(28, 28); // ground light pool
 
 // ── Tree instance helpers ─────────────────────────────────────────────────────
 
@@ -326,7 +300,6 @@ function _makeGroves(variants, rand) {
       const d = (c.x - x) ** 2 + (c.z - z) ** 2;
       if (d < best) { best = d; g = c; }
     }
-    if (byFamily.dead.length && rand() < DECOR_DEAD_CHANCE) return { variant: byFamily.dead[0], age: g.age };
     if (living.length > 1 && rand() < DECOR_STRAY_CHANCE) {
       const other = byFamily[g.family === 'conifer' ? 'broadleaf' : 'conifer'];
       return { variant: other[Math.floor(rand() * other.length)], age: g.age };
@@ -344,10 +317,12 @@ function addDecorTree(batches, { variant: v, age }, x, z, rand) {
   const l = 0.85 + rand() * 0.3, warm = rand() * 0.25;
   addContactShade(x, z, crownR * 1.5, 0.5);
   registerCircle(x, z, 1.2 * s); // trunk: keeps bushes, rocks and grass out of it
+  const spot = { x, z, r: crownR };
   batches.get(v.id).add(
     _compose(x, getTerrainHeight(x, z) - 0.15 * s, z, rand() * Math.PI * 2, s / Math.sqrt(squash), s * squash, s / Math.sqrt(squash)),
     new THREE.Color(l * (1 + warm * 0.4), l * (1 + warm * 0.1), l * (1 - warm * 0.3)),
   );
+  return spot;
 }
 
 let _benchCount = 0;
@@ -402,7 +377,7 @@ function addBench(batches, x, z, facingAngle) {
 
 /**
  * Add a lamppost at world position (x, z).
- * No PointLights — illumination is faked via emissive head + additive halo plane.
+ * No PointLights — the light on the ground and plants is a baked texture (lampLight.js), fed with these positions.
  */
 function addLamppost(batches, x, z) {
   const gy = getTerrainHeight(x, z);
@@ -412,71 +387,72 @@ function addLamppost(batches, x, z) {
     batches.pole.add(_compose(x, gy + 4,   z, 0, 1, 1, 1));
     batches.head.add(_compose(x, gy + 8.5, z, 0, 1, 1, 1));
   }
-  _pos.set(x, gy + 0.15, z);
-  _rot.set(-Math.PI / 2, 0, 0);
-  _scl.set(1, 1, 1);
-  _quat.setFromEuler(_rot);
-  _mat.compose(_pos, _quat, _scl);
-  batches.halo.add(_mat.clone());
 }
 
 // ── Arc-length path sampling ──────────────────────────────────────────────────
 
-/**
- * Sample positions every `spacing` world-units along all bezier curves.
- * Returns { x, z, facingAngle } where facingAngle points TOWARD the path.
- *
- * side: +1 = right side of travel direction, -1 = left
- * clearance: metres beyond the path edge (offset = halfWidth + clearance)
- */
-function _sampleAlongPaths(pathSegments, spacing, side, clearance) {
-  const results = [];
+// Offset = half the path's actual width here + clearance: merged ribbons are much wider than the default 8, so a fixed
+// half-width would put props inside the path (and they'd be rejected). Width defaults to 8 (single path).
+const PROP_STEP = 2; // metres between the points props are tried at
 
+/** Points every `step` along all paths: { x, z, tx, tz (unit tangent), hw (half width) }. */
+function _pathSamples(pathSegments, step) {
+  const out = [];
   for (const { pts } of pathSegments) {
     let carry = 0;
-
     for (let i = 1; i < pts.length; i++) {
       const ax = pts[i].u ?? pts[i].x ?? 0, az = pts[i].v ?? pts[i].y ?? 0;
-      const bx = pts[i-1].u ?? pts[i-1].x ?? 0, bz = pts[i-1].v ?? pts[i-1].y ?? 0;
-      const dx  = ax - bx;
-      const dy  = az - bz;
-      const len = Math.sqrt(dx * dx + dy * dy);
+      const bx = pts[i - 1].u ?? pts[i - 1].x ?? 0, bz = pts[i - 1].v ?? pts[i - 1].y ?? 0;
+      const dx = ax - bx, dz = az - bz, len = Math.hypot(dx, dz);
       if (len < 0.001) continue;
-
       carry += len;
-
-      while (carry >= spacing) {
-        carry -= spacing;
-        const t  = (len - carry) / len;
-        const cx = bx + dx * t;
-        const cy = bz + dy * t;
-
-        // Offset = half the path's actual width here + clearance. Merged ribbons are much wider
-        // than the default 8, so a fixed half-width would put props inside the path (and they'd
-        // be rejected). Width defaults to 8 (single path).
-        const halfWidth = (pts[i].width ?? 8) / 2;
-        const offset = halfWidth + clearance;
-
-        // Tangent + perpendicular
-        const tx = dx / len, ty = dy / len;
-        const px = -ty * side, py = tx * side;
-
-        const wx = cx + px * offset;
-        const wz = cy + py * offset;
-
-        // Three.js rotation.y=a maps local +Z to world (sin(a), 0, cos(a)).
-        // Inward direction (toward path centreline):
-        //   side=+1: perp was (-ty, tx), inward is (ty, -tx)  → atan2(ty, -tx)
-        //   side=-1: perp was (+ty,-tx), inward is (-ty,  tx) → atan2(-ty, tx)
-        const facingAngle = side > 0
-          ? Math.atan2(ty, -tx)
-          : Math.atan2(-ty, tx);
-
-        results.push({ x: wx, z: wz, facingAngle });
+      while (carry >= step) {
+        carry -= step;
+        const t = (len - carry) / len;
+        out.push({ x: bx + dx * t, z: bz + dz * t, tx: dx / len, tz: dz / len, hw: (pts[i].width ?? 8) / 2 });
       }
     }
   }
-  return results;
+  return out;
+}
+
+/** Points every `step` round a plaza's rim, going clockwise, so the right-hand side (+1) is the outside. */
+function _plazaSamples({ cx, cz, edgeR }, step) {
+  const n = Math.max(8, Math.round(2 * Math.PI * edgeR / step));
+  const out = [];
+  for (let i = 0; i < n; i++) {
+    const a = (i / n) * Math.PI * 2;
+    const r = edgeR - BENCH_PLAZA_GAP; // the plaza disc itself
+    out.push({ x: cx + Math.cos(a) * r, z: cz + Math.sin(a) * r, tx: Math.sin(a), tz: -Math.cos(a), hw: 1 });
+  }
+  return out;
+}
+
+/**
+ * Place props along `samples` (see _pathSamples): at each sample whose nearest earlier prop is ≥ `spacing` away, try the
+ * given sides × offsets (from the path edge) until `accept(x, z, facingAngle)` says yes, then `place` it. `placed` holds
+ * the sample points of the props so far, so the spacing also holds between different paths.
+ */
+function _placeProps(samples, placed, spacing, sides, offsets, accept, place) {
+  const s2 = spacing * spacing;
+  for (const s of samples) {
+    if (placed.some(p => (p.x - s.x) ** 2 + (p.z - s.z) ** 2 < s2)) continue;
+    let done = false;
+    for (const side of sides) {
+      for (const off of offsets) {
+        // Perpendicular on `side`; the inward direction (back towards the path) is its opposite, and rotation.y = a faces (sin a, cos a).
+        const px = -s.tz * side, pz = s.tx * side;
+        const x = s.x + px * (s.hw + off), z = s.z + pz * (s.hw + off);
+        const facing = Math.atan2(-px, -pz);
+        if (!accept(x, z, facing)) continue;
+        place(x, z, facing);
+        placed.push({ x: s.x, z: s.z, px: x, pz: z });
+        done = true;
+        break;
+      }
+      if (done) break;
+    }
+  }
 }
 
 /**
@@ -657,70 +633,55 @@ export function buildEnvironment(scene, projectNodes, pathGraph, rand, pathSegme
         pole: new InstanceBatch(GEO_LAMP_POLE, MAT_POLE,      cap(MAX_LAMPS)),
         head: new InstanceBatch(GEO_LAMP_HEAD, MAT_LAMP_HEAD, cap(MAX_LAMPS)),
       }),
-    halo: new InstanceBatch(GEO_LAMP_HALO, MAT_LAMP_HALO, cap(MAX_LAMPS)),
   };
 
-  // ── Benches (right side of path) ────────────────────────────────────────
-  const benchPoints = _sampleAlongPaths(segs, BENCH_SPACING, 1, BENCH_SIDE_CLEAR);
-  for (const { x, z, facingAngle } of benchPoints) {
-    // Check against the real path widths, not the 2-unit-cell path grid: that grid reaches ~2
-    // units past the path edge, which would push benches away from it.
-    if (isOccupied(x, z, benchFootprint - 0.4, true) || !_clearOfPaths(x, z, segs, BENCH_PATH_GAP) || isOnPath(x, z, BENCH_PAINT_GAP)) continue;
-    addBench(benchBatches, x, z, facingAngle);
-    registerCircle(x, z, benchFootprint);
-    registerBench(x, z, facingAngle, ...benchSeat);
+  // ── Lampposts and benches, spread over every path and plaza ─────────────
+  // Walk along each path (and round each plaza) in small steps; a prop goes in wherever the nearest one of its kind is
+  // at least `spacing` away *and* a spot beside the path is free — trying either side and a few distances out. A spot
+  // that is blocked (tree, rock, another path) just delays the prop to the next step, so no stretch is left bare.
+  const lampSpots = [], benchSpots = [];
+  const plazas = (plazaRadius ? projectNodes : [])
+    .filter(p => plazaRadius.get(p.id))
+    .map(p => ({ cx: p.layoutU, cz: p.layoutV, edgeR: plazaRadius.get(p.id) + BENCH_PLAZA_GAP }));
+  const pathSamples = _pathSamples(segs, PROP_STEP);
+  const plazaSamples = plazas.flatMap(pl => _plazaSamples(pl, PROP_STEP));
+
+  const acceptLamp = (x, z) => !isOccupied(x, z, 2) && !isOnPath(x, z, 1);
+  const lampSides = [-1, 1], lampOffsets = [LAMP_SIDE_CLEAR, LAMP_SIDE_CLEAR + 1.5, LAMP_SIDE_CLEAR + 3];
+  for (const samples of [pathSamples, plazaSamples]) {
+    _placeProps(samples, lampSpots, LAMP_SPACING, lampSides, lampOffsets, acceptLamp, (x, z) => {
+      addLamppost(lampBatches, x, z);
+      registerCircle(x, z, 1.0);
+    });
   }
 
-  // ── Lampposts (left side of path) ───────────────────────────────────────
-  const lampPoints = _sampleAlongPaths(segs, LAMP_SPACING, -1, LAMP_SIDE_CLEAR);
-  for (const { x, z } of lampPoints) {
-    if (isOccupied(x, z, 2) || isOnPath(x, z, 1)) continue;
-    addLamppost(lampBatches, x, z);
-    registerCircle(x, z, 1.0);
+  // Check against the real path widths, not the 2-unit-cell path grid: that grid reaches ~2 units past the path edge,
+  // which would push benches away from it.
+  const acceptBench = (x, z) => !isOccupied(x, z, benchFootprint - 0.4, true) && _clearOfPaths(x, z, segs, BENCH_PATH_GAP) && !isOnPath(x, z, BENCH_PAINT_GAP);
+  const benchSides = [1, -1], benchOffsets = [BENCH_SIDE_CLEAR, BENCH_SIDE_CLEAR + 1.5, BENCH_SIDE_CLEAR + 3];
+  for (const samples of [pathSamples, plazaSamples]) {
+    _placeProps(samples, benchSpots, BENCH_SPACING, benchSides, benchOffsets, acceptBench, (x, z, facingAngle) => {
+      addBench(benchBatches, x, z, facingAngle);
+      registerCircle(x, z, benchFootprint);
+      registerBench(x, z, facingAngle, ...benchSeat);
+    });
   }
 
-  // ── Props around plaza circumferences ───────────────────────────────────
-  if (plazaRadius) {
-    for (const p of projectNodes) {
-      const r = plazaRadius.get(p.id);
-      if (!r) continue;
-      const cx = p.layoutU, cz = p.layoutV;
-      const edgeR = r + BENCH_PLAZA_GAP; // just outside the plaza disc edge
-      const circumference = 2 * Math.PI * edgeR;
-      const lampCount  = Math.max(2, Math.floor(circumference / LAMP_SPACING));
-      const benchCount = Math.max(1, Math.floor(circumference / BENCH_SPACING));
-
-      for (let i = 0; i < lampCount; i++) {
-        const angle = (i / lampCount) * Math.PI * 2;
-        const x = cx + Math.cos(angle) * edgeR;
-        const z = cz + Math.sin(angle) * edgeR;
-        if (isOccupied(x, z, 2) || isOnPath(x, z, 1)) continue;
-        addLamppost(lampBatches, x, z);
-        registerCircle(x, z, 1.0);
-      }
-      for (let i = 0; i < benchCount; i++) {
-        const angle = (i / benchCount) * Math.PI * 2 + Math.PI / benchCount; // offset from lamps
-        const x = cx + Math.cos(angle) * edgeR;
-        const z = cz + Math.sin(angle) * edgeR;
-        if (isOccupied(x, z, benchFootprint - 0.4, true) || !_clearOfPaths(x, z, segs, BENCH_PATH_GAP) || isOnPath(x, z, BENCH_PAINT_GAP)) continue;
-        const facingAngle = Math.atan2(cx - x, cz - z); // face toward plaza centre
-        addBench(benchBatches, x, z, facingAngle);
-        registerCircle(x, z, benchFootprint);
-        registerBench(x, z, facingAngle, ...benchSeat);
-      }
-    }
-  }
+  // ── The football pitch: goal, ball and a mown square (planned before the trees, so they keep off it) ──
+  const pitch = decor?.goal?.length ? planPitch(rand) : null;
+  if (pitch) buildPitch(scene, decor, pitch);
 
   // ── Trees (random, avoiding all registry obstacles) ──────────────────────
   // Decor-model trees when they loaded; otherwise the procedural cone / round / pine / birch trees.
   const decorTrees = decor?.tree ?? [];
+  const treeSpots = []; // { x, z, r } of the decor trees (mushrooms grow at their feet)
   const treeCount = Math.round(TREE_DENSITY * (decorTrees.length ? DECOR_TREE_DENSITY : 1) * getParkAreaScale());
   const pickTree = decorTrees.length ? _makeGroves(decorTrees, rand) : null;
-  const decorTreeBatches = new Map(decorTrees.map(v => [v.id, new InstanceBatch(v.geometry, v.material, treeCount)]));
+  const decorTreeBatches = new Map(decorTrees.map(v => [v.id, new VariantBatch(v, treeCount)]));
   for (let i = 0; i < treeCount; i++) {
     const pos = _randomClear(rand, decorTrees.length ? 6 : 4);
     if (!pos) continue;
-    if (decorTrees.length) { addDecorTree(decorTreeBatches, pickTree(pos.x, pos.z), pos.x, pos.z, rand); continue; }
+    if (decorTrees.length) { treeSpots.push(addDecorTree(decorTreeBatches, pickTree(pos.x, pos.z), pos.x, pos.z, rand)); continue; }
     const ry   = rand() * Math.PI * 2;
     const pick = rand();
     if (pick < 0.25)      addConeTree(coneBatches,   pos.x, pos.z, ry, rand);
@@ -730,20 +691,35 @@ export function buildEnvironment(scene, projectNodes, pathGraph, rand, pathSegme
   }
 
   // ── Undergrowth: bushes and flower patches (small, so they don't block anyone) ──
-  const bushCount = Math.round(TREE_DENSITY * 1.6 * getParkAreaScale());
-  for (let i = 0; i < bushCount; i++) {
-    const pos = _randomClear(rand, 3);
-    if (pos) addBush(bushBatch, pos.x, pos.z, rand);
+  // From the decor models when they loaded, else the procedural blobs.
+  const area = getParkAreaScale();
+  const scattered = []; // decor batches to finalise
+  const flowerSpots = [];
+  if (decor?.bush?.length) {
+    scattered.push(...scatterBushes(rand, decor.bush, { count: Math.round(TREE_DENSITY * DECOR_BUSH_DENSITY * area), randomClear: _randomClear }));
+  } else {
+    const bushCount = Math.round(TREE_DENSITY * 1.6 * area);
+    for (let i = 0; i < bushCount; i++) {
+      const pos = _randomClear(rand, 3);
+      if (pos) addBush(bushBatch, pos.x, pos.z, rand);
+    }
   }
-  const flowerPatches = Math.round(TREE_DENSITY * 0.5 * getParkAreaScale());
-  for (let i = 0; i < flowerPatches; i++) {
-    const pos = _randomClear(rand, 3);
-    if (pos) addFlowerPatch(flowerBatch, pos.x, pos.z, rand);
+  const flowerPatches = Math.round(TREE_DENSITY * 0.5 * area);
+  if (decor?.flower?.length || decor?.flowerpatch?.length) {
+    const f = scatterFlowers(rand, decor.flower, decor.flowerpatch, { count: flowerPatches, randomClear: _randomClear });
+    scattered.push(...f.batches);
+    flowerSpots.push(...f.spots);
+  } else {
+    for (let i = 0; i < flowerPatches; i++) {
+      const pos = _randomClear(rand, 3);
+      if (pos) { addFlowerPatch(flowerBatch, pos.x, pos.z, rand); flowerSpots.push(pos); }
+    }
   }
+  if (decor?.mushroom?.length) scattered.push(...scatterMushrooms(rand, decor.mushroom, treeSpots, { count: Math.round(DECOR_MUSHROOM_GROUPS * area) }));
+  if (decor?.log?.length) scattered.push(...scatterLogs(rand, decor.log, { count: Math.round(DECOR_LOG_COUNT * area), randomClear: _randomClear }));
 
-  // ── Rocks (boulder groups on steep slopes, loose rocks on flat ground) and stumps ─────
+  // ── Rocks (boulder groups on steep slopes, loose rocks on flat ground) ─────
   _buildRocks(scene, rand, decor?.rock ?? []);
-  const stumpBatches = _buildStumps(scene, rand, decor?.stump ?? []);
 
   // ── Finalize all InstanceBatches (set count + add to scene) ─────────────
   for (const b of Object.values(coneBatches))  b.finalize(scene);
@@ -752,14 +728,19 @@ export function buildEnvironment(scene, projectNodes, pathGraph, rand, pathSegme
   for (const b of Object.values(birchBatches)) b.finalize(scene);
   for (const b of decorTreeBatches.values())   b.finalize(scene);
   // (rock batches finalise themselves inside _buildRocks)
-  for (const b of stumpBatches)                b.finalize(scene);
+  for (const b of scattered)                   b.finalize(scene);
   bushBatch.finalize(scene);
   flowerBatch.finalize(scene);
   for (const b of Object.values(benchBatches).flat()) b.finalize(scene);
   for (const b of Object.values(lampBatches).flat())  b.finalize(scene);
 
-  // Return lamp materials so dayCycle can drive emissive + halo opacity
-  return { lampHeadMat: MAT_LAMP_HEAD, lampHaloMat: MAT_LAMP_HALO };
+  // Lamp materials so dayCycle can drive emissive + halo opacity; the pitch (the ground paints the mown square);
+  // and where the flowers are (butterflies visit them).
+  return {
+    lampHeadMat: MAT_LAMP_HEAD, pitch, flowerSpots,
+    lamps: lampSpots.map(p => ({ x: p.px, z: p.pz })), benches: benchSpots.map(p => ({ x: p.px, z: p.pz })),
+    pathSamples, plazas,
+  };
 }
 
 // ── Rock outcroppings ─────────────────────────────────────────────────────────
@@ -776,7 +757,7 @@ function _buildRocks(scene, rand, variants) {
 
   const big   = variants.filter(v => Math.max(v.size[0], v.size[2]) >= BIG_ROCK_WIDTH);
   const small = variants.filter(v => !big.includes(v));
-  const batches = new Map(variants.map(v => [v.id, new InstanceBatch(v.geometry, v.material, 1200)]));
+  const batches = new Map(variants.map(v => [v.id, new VariantBatch(v, 1200)]));
 
   const logUniform = ([lo, hi]) => lo * Math.pow(hi / lo, rand()); // many small, fewer big
   const place = (v, x, z, scale) => {
@@ -828,23 +809,6 @@ function _buildRocks(scene, rand, variants) {
   }
 
   for (const b of batches.values()) b.finalize(scene);
-}
-
-/** Tree stumps dotted around the park, from the decor stump models. Returns the batches to finalise. */
-function _buildStumps(scene, rand, variants) {
-  if (!variants.length) return [];
-  const count = Math.round(DECOR_STUMP_COUNT * getParkAreaScale());
-  const batches = new Map(variants.map(v => [v.id, new InstanceBatch(v.geometry, v.material, count)]));
-  for (let i = 0; i < count; i++) {
-    const pos = _randomClear(rand, 3);
-    if (!pos) continue;
-    const v = variants[Math.floor(rand() * variants.length)];
-    const s = 1.3 + rand() * 1.2;
-    addContactShade(pos.x, pos.z, v.size[0] * s, 0.4);
-    batches.get(v.id).add(_compose(pos.x, getTerrainHeight(pos.x, pos.z) - 0.05, pos.z, rand() * Math.PI * 2, s, s, s));
-    registerCircle(pos.x, pos.z, 1.5);
-  }
-  return [...batches.values()];
 }
 
 function _buildProceduralRocks(scene, rand) {

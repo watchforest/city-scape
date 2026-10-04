@@ -27,6 +27,64 @@ const CLOUD_WAIT    = [5, 70];     // seconds a cloud that has left waits before
 const FADE_REACH    = 60;          // the fades happen within this distance inside the map's left and right edges; beyond them, the cloud's own half-width (a big cloud starts and ends further out)
 const CLOUD_OPACITY = 0.38; // per puff: a big cloud stacks a few dozen of them, so it must stay low to keep the map readable through it
 
+// ── Cloud shadows ─────────────────────────────────────────────────────────────
+// A small top-down map of where the clouds' shadows fall (white = sunlit, darker = shaded), redrawn a few times a second:
+// each puff is projected along the sun's rays onto the ground and stamped as a soft blob. The ground shader reads it.
+// So the shadows are exactly the real clouds' — same positions, size, speed and fade — not a lookalike noise.
+const SHADOW_RES      = 128;
+const SHADOW_EVERY    = 0.1;   // seconds between redraws
+const SHADOW_PUFF     = 0.1;   // darkness of one puff's shadow; they stack, as the puffs do
+const _shadowCanvas = typeof document !== 'undefined' ? Object.assign(document.createElement('canvas'), { width: SHADOW_RES, height: SHADOW_RES }) : null;
+const _shadowCtx = _shadowCanvas?.getContext('2d') ?? null;
+export const cloudShadowTexture = _shadowCanvas ? new THREE.CanvasTexture(_shadowCanvas) : null;
+if (cloudShadowTexture) {
+  cloudShadowTexture.generateMipmaps = false;
+  cloudShadowTexture.flipY = false; // canvas row 0 = world z min, like uv.y = 0
+  cloudShadowTexture.minFilter = THREE.LinearFilter;
+}
+let _shadowBlob = null; // a soft round blob, stamped once per puff
+let _shadowClock = 0;
+const _sun = new THREE.Vector3(0, 1, 0);
+
+/** Which way the sun is (any vector pointing from the park towards it); DayCycle calls this. */
+export function setCloudSun(x, y, z) { _sun.set(x, y, z).normalize(); }
+
+function _drawCloudShadows() {
+  const ctx = _shadowCtx;
+  if (!ctx) return;
+  if (!_shadowBlob) {
+    _shadowBlob = document.createElement('canvas');
+    _shadowBlob.width = _shadowBlob.height = 64;
+    const b = _shadowBlob.getContext('2d');
+    const g = b.createRadialGradient(32, 32, 0, 32, 32, 32);
+    g.addColorStop(0, 'rgba(0,0,0,1)');
+    g.addColorStop(0.5, 'rgba(0,0,0,0.55)');
+    g.addColorStop(1, 'rgba(0,0,0,0)');
+    b.fillStyle = g;
+    b.fillRect(0, 0, 64, 64);
+  }
+  ctx.globalAlpha = 1;
+  ctx.fillStyle = '#fff';
+  ctx.fillRect(0, 0, SHADOW_RES, SHADOW_RES);
+  if (_sun.y > 0.05) {
+    const k = SHADOW_RES / (_half * 2), ex = _sun.x / _sun.y, ez = _sun.z / _sun.y;
+    for (const c of _clouds) {
+      if (c.fade <= 0) continue;
+      for (const p of c.puffs) {
+        if (p.size <= 0) continue;
+        const y = c.y + p.oy;
+        // Follow the ray from the puff down to the ground (away from the sun).
+        const gx = c.x + p.ox - ex * y, gz = c.z + p.oz - ez * y;
+        const r = p.size * 0.5 * k;
+        ctx.globalAlpha = Math.min(1, c.fade * SHADOW_PUFF);
+        ctx.drawImage(_shadowBlob, (gx + _half) * k - r, (gz + _half) * k - r, r * 2, r * 2);
+      }
+    }
+  }
+  ctx.globalAlpha = 1;
+  cloudShadowTexture.needsUpdate = true;
+}
+
 const _clouds = [];
 let _mesh = null;
 let _puffAttr = null; // per puff: x = seed, y = fade
@@ -208,6 +266,9 @@ export function updateClouds(dt) {
   }
   _mesh.instanceMatrix.needsUpdate = true;
   _puffAttr.needsUpdate = true;
+
+  _shadowClock += dt;
+  if (_shadowClock >= SHADOW_EVERY || dt === 0) { _shadowClock = 0; _drawCloudShadows(); }
 }
 
 /** Debug aid (console / tests): where each cloud is and how visible it is. */

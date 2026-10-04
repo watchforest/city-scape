@@ -12,8 +12,9 @@
 import * as THREE from 'three';
 import { getParkHalf, getParkScale } from './parkBounds.js';
 import { setWaterLight } from './lake.js';
-import { setSkyColors } from './sky.js';
-import { setCloudLight } from './clouds.js';
+import { setSkyColors, setSkySun } from './sky.js';
+import { setCloudLight, setCloudSun } from './clouds.js';
+import { setLampNight } from './lampLight.js';
 import { SKY_DAY, SKY_DAWN, SKY_NIGHT } from '@/config.js';
 
 const _skyDay   = new THREE.Color(SKY_DAY);
@@ -30,6 +31,8 @@ const _cloudShade = new THREE.Color();
 const _cloudNightLit = new THREE.Color(0.3, 0.34, 0.5);
 const _cloudDayShade = new THREE.Color(0.6, 0.67, 0.8);
 const _cloudNightShade = new THREE.Color(0.1, 0.12, 0.2);
+const _twilightGlow = new THREE.Color(1.0, 0.72, 0.5);
+const _twilightTop = new THREE.Color(0.28, 0.3, 0.55);
 const _horizonBuf = new THREE.Color();
 const _zenithBuf = new THREE.Color();
 
@@ -56,7 +59,6 @@ export class DayCycle {
     this._presetIdx = -1;
     this._scene = scene;
     this._lampHeadMat = null;
-    this._lampHaloMat = null;
     this._lastUpdateMs = -Infinity; // update() is throttled; see UPDATE_INTERVAL_MS
     this._cssNight = null;          // last theme written to the CSS variables
     this.daylight = 1;              // 0 (night) … 1 (day); set by update()
@@ -88,9 +90,8 @@ export class DayCycle {
   }
 
   /** Register lamp materials to be driven by the day cycle. */
-  setLampMaterials(headMat, haloMat) {
+  setLampMaterials(headMat) {
     this._lampHeadMat = headMat;
-    this._lampHaloMat = haloMat;
   }
 
   /** Cycle through dawn/day/dusk/night presets (T key). */
@@ -150,9 +151,14 @@ export class DayCycle {
     this.daylight = Math.min(1, sunAbove * 1.6); // 0 at night … 1 for most of the day (cloud shadows, …)
 
     // Gradient sky dome: hazy horizon, deeper zenith. At dawn/dusk the horizon keeps the warm sky colour.
-    _horizonBuf.copy(sky).lerp(_white, 0.35 * this.daylight);
-    _zenithBuf.copy(sky).multiplyScalar(0.55 + 0.1 * this.daylight);
-    _zenithBuf.b = Math.min(1, _zenithBuf.b + 0.12 * this.daylight);
+    _horizonBuf.copy(sky).lerp(_white, 0.7 * this.daylight);
+    _zenithBuf.copy(sky).multiplyScalar(0.45 - 0.03 * this.daylight);
+    // Dawn and dusk: a warm glow at the horizon under a cooler, deeper sky.
+    const twilight = Math.max(0, 1 - Math.abs(hours - 6.5) / 2, 1 - Math.abs(hours - 18.7) / 2.2);
+    _horizonBuf.lerp(_twilightGlow, 0.45 * twilight);
+    _zenithBuf.lerp(_twilightTop, 0.35 * twilight);
+    _zenithBuf.b = Math.min(1, _zenithBuf.b + 0.14 * this.daylight);
+    _zenithBuf.r *= 1 - 0.35 * this.daylight; // deeper, bluer overhead
     setSkyColors(_horizonBuf, _zenithBuf);
 
     // ── Ambient ───────────────────────────────────────────────────────────
@@ -163,8 +169,10 @@ export class DayCycle {
 
     // ── Sun ───────────────────────────────────────────────────────────────
     const sunVisible = hours >= 5 && hours <= 19;
-    this._sun.visible = sunVisible;
-    if (sunVisible) {
+    // (Lights are never hidden, only dimmed to 0: toggling `visible` changes the light count and makes the renderer
+    // rebuild every material's shader, a stall of a couple of hundred ms at each sunrise and sunset.)
+    if (!sunVisible) this._sun.intensity = 0;
+    else {
       // Arc east (positive x) at dawn → west (negative x) at dusk
       const arcAngle = ((hours - 5) / 14) * Math.PI; // 0 → π
       const s        = this._parkScale;
@@ -182,13 +190,18 @@ export class DayCycle {
     }
 
     // ── Moon ──────────────────────────────────────────────────────────────
-    this._moon.visible   = !sunVisible || hours < 7 || hours > 18;
-    this._moon.intensity = Math.max(0, 0.15 - sunAbove * 0.12);
+    const moonUp = !sunVisible || hours < 7 || hours > 18;
+    this._moon.intensity = moonUp ? Math.max(0, 0.15 - sunAbove * 0.12) : 0;
 
     // ── Clouds: sunny tops take the sun's colour, undersides a grey-blue touched by the sky ─────
     _cloudLit.copy(this._sun.color).lerp(_cloudNightLit, 1 - this.daylight);
     _cloudShade.copy(_cloudDayShade).lerp(_cloudNightShade, 1 - this.daylight).lerp(this._scene.background, 0.22);
     setCloudLight(_cloudLit, _cloudShade);
+
+    // Cloud shadows fall along the sun's rays (by night there are none; the ground ignores them then).
+    setCloudSun(this._sun.position.x, this._sun.position.y, this._sun.position.z);
+    const glow = sunVisible ? Math.min(1, (hours - 5) * 0.8, (19 - hours) * 0.8) : 0; // fades in at sunrise, out at sunset
+    setSkySun(this._sun.position.x, this._sun.position.y, this._sun.position.z, this._sun.color, Math.max(0, glow));
 
     // ── Water: lit by whichever of sun/moon is up ─────────────────────────
     const lightSrc = sunVisible ? this._sun : this._moon;
@@ -212,7 +225,7 @@ export class DayCycle {
     }
     this.night = lampT; // exposed so agents can bias what they do (0 = day … 1 = night)
     if (this._lampHeadMat) this._lampHeadMat.emissiveIntensity = lampT * 2.0;
-    if (this._lampHaloMat) this._lampHaloMat.opacity           = lampT * 0.9;
+    setLampNight(lampT); // the light the lamps throw on the ground and plants (lampLight.js)
 
     // ── CSS variables for UI theming (only touched when the theme flips) ──
     const isNight = hours < 7 || hours > 19;

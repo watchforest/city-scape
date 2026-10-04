@@ -4,7 +4,7 @@ import {
   CAM_PERSON_RADIUS, CAM_PERSON_CENTRE, CAM_PERSON_RATIO, CAM_PERSON_LIST_RATIO, CAM_FOLLOW_RATIO,
 } from './config.js';
 import { mulberry32 } from './utils/prng.js';
-import { buildProjectEdges } from './layout/projectLayout.js';
+import { buildProjectEdges, layoutProjects } from './layout/projectLayout.js';
 import { buildNavMesh } from './world/NavMesh.js';
 import { resolveModelUrl } from './assets/modelUrl.js';
 import { assetUrl } from './assets/assetUrl.js';
@@ -21,13 +21,14 @@ import { buildGround, updateGroundShade } from './world/ground.js';
 import { addContactShade } from './world/groundShade.js';
 import { buildSky } from './world/sky.js';
 import { registerDecor, collectDecor } from './world/decor.js';
-import { buildBirds, buildDucks, updateWildlife } from './world/wildlife.js';
+import { buildBirds, buildDucks, buildButterflies, updateWildlife, prewarmWildlife } from './world/wildlife.js';
 import { setLake, buildWater, updateWater } from './world/lake.js';
 import { getTerrainHeight } from './world/terrain.js';
 import { buildEnvironment, findLakePosition } from './world/environment.js';
 import { buildClouds, updateClouds, cloudState } from './world/clouds.js';
 import { buildGrass, updateGrass } from './world/grass.js';
 import { DayCycle } from './world/dayCycle.js';
+import { bakeLampLight } from './world/lampLight.js';
 import { AssetLibrary } from './assets/AssetLibrary.js';
 import { registerAssets } from './assets/registry.js';
 import { AgentController } from './agents/AgentController.js';
@@ -46,14 +47,19 @@ async function init() {
   const { people, projects, quotes } = await loadData();
 
   // ── Layout — baked offline via `npm run bake-layout` (see scripts/bakeLayout.mjs) ──
-  const layoutRes = await fetch(assetUrl('assets/data/layout.json'));
-  const layout = layoutRes.ok ? await layoutRes.json() : { projects: [] };
+  // A project without a baked position (new data) — or any `?data=` test set, whose ids may coincide with the real ones —
+  // makes the layout run here in the browser instead (same algorithm, a second or so for large sets), so new data never
+  // piles up at the origin. Bake it (and commit layout.json) for the real data to skip that.
+  const layoutRes = new URLSearchParams(location.search).has('data') ? null : await fetch(assetUrl('assets/data/layout.json'));
+  const layout = layoutRes?.ok ? await layoutRes.json() : { projects: [] };
   const layoutById = new Map(layout.projects.map(p => [p.id, p]));
-  const projectNodes = projects.map(proj => ({
-    ...proj,
-    layoutU: layoutById.get(proj.id)?.layoutU ?? 0,
-    layoutV: layoutById.get(proj.id)?.layoutV ?? 0,
-  }));
+  let projectNodes;
+  if (projects.length && projects.some(p => !layoutById.has(p.id))) {
+    console.info(`[layout] ${projects.filter(p => !layoutById.has(p.id)).length} project(s) have no baked position: laying out all ${projects.length} now (run \`npm run bake-layout\` to bake it).`);
+    projectNodes = layoutProjects(projects, mulberry32(layout.seed ?? SEED));
+  } else {
+    projectNodes = projects.map(proj => ({ ...proj, layoutU: layoutById.get(proj.id).layoutU, layoutV: layoutById.get(proj.id).layoutV }));
+  }
 
   // Project node footprints are covered by the rasterized path grid (plaza discs
   // are included in pathMeshes). No need to register circles here.
@@ -72,7 +78,7 @@ async function init() {
     const url = resolveModelUrl(proj.model);
     if (url) assetLibrary.register(`attraction:${proj.id}`, url);
   }
-  const decorManifest = await registerDecor(assetLibrary); // trees, rocks, grass, stumps (see world/decor.js)
+  const decorManifest = await registerDecor(assetLibrary); // trees, rocks, grass (see world/decor.js)
   await assetLibrary.preloadAll();
   const decor = collectDecor(assetLibrary, decorManifest);
 
@@ -110,19 +116,21 @@ async function init() {
   const pathTexture = bakePathTexture(pathShapes, getParkHalf());
 
   // ── Environment ───────────────────────────────────────────────────────────
-  const { lampHeadMat, lampHaloMat } = buildEnvironment(scene, projectNodes, navGraph, rand, renderedSegments, plazaRadius, lakePos, decor);
+  const { lampHeadMat, pitch, flowerSpots, lamps, benches: benchSpots, pathSamples, plazas } = buildEnvironment(scene, projectNodes, navGraph, rand, renderedSegments, plazaRadius, lakePos, decor);
   for (const a of attractions) addContactShade(a.displayU, a.displayV, a.footprintRadius * 1.35, 0.4); // grounds the landmarks
-  buildGround(scene, rand, pathTexture); // bakes the contact shading, so register it first
+  buildGround(scene, rand, pathTexture, pitch); // bakes the contact shading, so register it first
   buildSky(scene);
   buildWater(scene, getTerrainHeight);
   buildGrass(scene, rand, decor.grass);
   buildClouds(scene, rand);
   buildBirds(scene, rand, decor.bird);
   buildDucks(scene, rand);
+  buildButterflies(scene, rand, decor.butterfly, flowerSpots);
 
   // ── Day/night cycle ───────────────────────────────────────────────────────
   const dayCycle = new DayCycle(scene);
-  dayCycle.setLampMaterials(lampHeadMat, lampHaloMat);
+  dayCycle.setLampMaterials(lampHeadMat);
+  bakeLampLight(lamps); // the pools of light under the lamps (materials pick them up via applyLampLight)
 
   // ── Attractions ───────────────────────────────────────────────────────────
   const attractionMeshes = buildAttractionMeshes(scene, attractions, assetLibrary);
@@ -140,7 +148,7 @@ async function init() {
       frameLandmark(attraction, { zoomOutHere: true });
     }
   );
-  if (import.meta.env.DEV) Object.assign(window.__dbg ??= {}, { cam, controls, camController, agentController, scene, attractionMeshes, pathSegments, navGraph, clouds: { update: updateClouds, state: cloudState } }); // dev only: poke at the scene from the console
+  if (import.meta.env.DEV) Object.assign(window.__dbg ??= {}, { cam, controls, camController, agentController, scene, attractionMeshes, pathSegments, navGraph, pitch, flowerSpots, lamps, benchSpots, pathSamples, plazas, dayCycle, clouds: { update: updateClouds, state: cloudState } }); // dev only: poke at the scene from the console
   agentController.setRand(rand);
   agentController.setCamera(cam);
   agentController.setDismissCallback(() => { camController.zoomOut(); activeAgent = null; });
@@ -264,10 +272,10 @@ async function init() {
     updateSleepZs(agentController.getAgents(), dt);
     updateChatBubbles(agentController.getAgents(), dt);
     animateAttractions(attractionMeshes, dt);
-    updateGrass(dt);
+    updateGrass(dt, cam.position);
     updateClouds(dt);
     updateWater(dt);
-    updateGroundShade(dt, dayCycle.daylight);
+    updateGroundShade(dayCycle.daylight);
     updateWildlife(dt, dayCycle.daylight);
     dayCycle.update();
     mark('world');
@@ -279,6 +287,7 @@ async function init() {
     mark('render'); // CPU time to submit the frame; the GPU works on after this
     if (perf) perf.frames++;
   }
+  prewarmWildlife(renderer, scene, cam); // build the shaders of what is hidden right now, so nothing stalls when it appears
   animate();
 
   function _selectAgent(agent) {

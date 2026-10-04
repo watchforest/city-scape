@@ -18,7 +18,10 @@
  */
 
 import * as THREE from 'three';
-import { SEED, LAKE_SHALLOW_COLOR, LAKE_DEEP_COLOR, LAKE_FOAM_COLOR } from '@/config.js';
+import { SEED, LAKE_SHALLOW_COLOR, LAKE_DEEP_COLOR, LAKE_FOAM_COLOR, DUCK_COUNT } from '@/config.js';
+
+const MAX_RIPPLES = Math.max(1, DUCK_COUNT); // ducks that ring the water (see setWaterRipple)
+const RIPPLE_REACH = 5.0;                    // how far a duck's rings spread
 import { mulberry32 } from '@/utils/prng.js';
 
 // ── Basin shape ───────────────────────────────────────────────────────────────
@@ -117,6 +120,7 @@ const FRAG = /* glsl */`
   uniform vec3  uLightColor;  // colour * intensity of the direct light (for the glint)
   uniform vec3  uSkyColor;
   uniform float uLight;       // overall light level, matched to the Lambert-lit ground
+  uniform vec4  uRipples[${MAX_RIPPLES}];  // per duck: x, z, phase, active (0/1)
   varying vec3 vWorld;
 
   float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
@@ -138,7 +142,28 @@ const FRAG = /* glsl */`
                   vnoise(p * 0.30 + vec2(-uTime * 0.14, uTime * 0.16) + 17.0)) - 0.5;
     vec2 b = vec2(vnoise(p * 1.10 + vec2(-uTime * 0.40, uTime * 0.22) + 5.0),
                   vnoise(p * 1.10 + vec2(uTime * 0.32, -uTime * 0.27) + 31.0)) - 0.5;
-    vec3 N = normalize(vec3(a.x * 0.55 + b.x * 0.30, 1.0, a.y * 0.55 + b.y * 0.30));
+    vec2 slope = vec2(a.x * 0.55 + b.x * 0.30, a.y * 0.55 + b.y * 0.30);
+
+    // Rings spreading from each duck: three rings, each growing outwards and fading, tilting the surface (the slope
+    // is odd across a ring: outwards on its leading edge, inwards behind it).
+    float ringLight = 0.0;
+    for (int i = 0; i < ${MAX_RIPPLES}; i++) {
+      vec4 dk = uRipples[i];
+      if (dk.w < 0.5) continue;
+      vec2 dv = p - dk.xy;
+      float d = length(dv);
+      if (d > ${RIPPLE_REACH.toFixed(1)} + 1.0) continue;
+      vec2 dir = dv / max(d, 0.001);
+      for (int k = 0; k < 3; k++) {
+        float age = fract(uTime * 0.28 + dk.z + float(k) / 3.0);          // 0 (just left the duck) … 1 (gone)
+        float r = 0.7 + age * ${RIPPLE_REACH.toFixed(1)};
+        float x = (d - r) * 2.4;
+        float ring = exp(-x * x) * (1.0 - age) * smoothstep(0.5, 1.2, d);
+        slope += dir * x * ring * 0.5;
+        ringLight += ring;
+      }
+    }
+    vec3 N = normalize(vec3(slope.x, 1.0, slope.y));
 
     vec3 V = normalize(cameraPosition - vWorld);
     vec3 L = normalize(uLightDir);
@@ -156,6 +181,9 @@ const FRAG = /* glsl */`
     vec3 R = reflect(-L, N);
     float spec = pow(max(dot(R, V), 0.0), 220.0);
     col += uLightColor * spec * 0.7;
+
+    // The rings catch a little sky light.
+    col = mix(col, sky * (0.45 + uLight), clamp(ringLight * 0.22, 0.0, 0.35));
 
     // Foam along the shore, broken up by noise and drifting slowly.
     float edge = depth + (vnoise(p * 0.9 + uTime * 0.05) - 0.5) * 0.22;
@@ -220,6 +248,7 @@ export function buildWater(scene, heightAt) {
       uLightColor: { value: new THREE.Color(1, 1, 1) },
       uSkyColor:   { value: new THREE.Color(0x87ceeb) },
       uLight:      { value: 0.5 },
+      uRipples:    { value: Array.from({ length: MAX_RIPPLES }, () => new THREE.Vector4(0, 0, 0, 0)) },
     },
   });
 
@@ -233,6 +262,12 @@ export function buildWater(scene, heightAt) {
 
   _water = { mesh, material };
   return _water;
+}
+
+/** Put rings round duck number `i` (0 ≤ i < DUCK_COUNT) at world (x, z); `phase` (0–1) offsets its rings from the others'. */
+export function setWaterRipple(i, x, z, phase = 0) {
+  const r = _water?.material.uniforms.uRipples.value[i];
+  if (r) r.set(x, z, phase, 1);
 }
 
 /** Advance the ripple animation. */

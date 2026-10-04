@@ -1,5 +1,5 @@
 /**
- * Decor models — the trees, rocks, grass clumps, stumps, benches, lamp posts and birds baked by
+ * Decor models — the trees, rocks, grass clumps, benches, lamp posts and birds baked by
  * `scripts/splitDecor.mjs` into public/assets/models/decor/ (one small GLB per model plus manifest.json).
  *
  * `registerDecor` + `collectDecor` load them through the AssetLibrary and return, per category, a list of
@@ -14,12 +14,18 @@
 
 import * as THREE from 'three';
 import { assetUrl } from '@/assets/assetUrl.js';
+import { addWind } from './wind.js';
+import { applyLampLight } from './lampLight.js';
+import { WIND_AMP } from '@/config.js';
 
-const EMPTY = () => ({ tree: [], rock: [], grass: [], stump: [], bench: [], lamp: [], bird: [] });
+const EMPTY = () => ({
+  tree: [], rock: [], grass: [], bench: [], lamp: [], bird: [],
+  bush: [], log: [], flower: [], mushroom: [], flowerpatch: [], ball: [], goal: [], butterfly: [],
+});
 
 // Faceted low-poly categories are shaded flat (their normals were dropped to allow simplification, see
-// splitDecor.mjs); the smooth ones (bench, lamp) keep their normals.
-const FLAT = new Set(['tree', 'rock', 'grass', 'stump']);
+// splitDecor.mjs); the smooth ones (bench, lamp, ball, goal, flower patches) keep their normals.
+const FLAT = new Set(['tree', 'rock', 'grass', 'bush', 'log', 'flower', 'mushroom']);
 
 /**
  * Step 1 — before `library.preloadAll()`: fetch the manifest and register every model with the library,
@@ -56,19 +62,23 @@ export function collectDecor(library, manifest) {
 
     asset.scene.updateWorldMatrix(true, true);
     const parts = [];
+    const swayAmp = WIND_AMP[m.category];
     asset.scene.traverse(o => {
       if (!o.isMesh) return;
       const src = o.material;
+      // Lambert like the rest of the park.
+      const material = new THREE.MeshLambertMaterial({
+        map: src.map ?? null,
+        color: src.map ? 0xffffff : src.color,
+        flatShading: FLAT.has(m.category),
+      });
+      if (swayAmp) addWind(material, { height: m.size?.[1] ?? 1, amp: swayAmp }); // plants sway in the wind
+      applyLampLight(material, 0.8);                                              // and catch the lamp light at night
       parts.push({
         name: o.name,
         materialName: src.name,
         geometry: o.geometry.clone().applyMatrix4(o.matrixWorld),
-        // Lambert like the rest of the park.
-        material: new THREE.MeshLambertMaterial({
-          map: src.map ?? null,
-          color: src.map ? 0xffffff : src.color,
-          flatShading: FLAT.has(m.category),
-        }),
+        material,
       });
     });
     if (!parts.length) continue;

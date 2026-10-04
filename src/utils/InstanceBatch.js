@@ -22,6 +22,7 @@ export class InstanceBatch {
     this._mesh = new THREE.InstancedMesh(geometry, material, maxCount);
     this._mesh.castShadow    = true;
     this._mesh.receiveShadow = false;
+    if (material.userData?.windDepth) this._mesh.customDepthMaterial = material.userData.windDepth; // swaying plants cast swaying shadows (world/wind.js)
     this._count = 0;
     this._maxCount = maxCount;
   }
@@ -72,6 +73,30 @@ export class InstanceBatch {
   /** @returns {THREE.InstancedMesh} */
   getMesh() {
     return this._mesh;
+  }
+}
+
+/**
+ * All the parts of one decor-model variant (see world/decor.js) instanced together: one InstanceBatch per part
+ * (a tree is trunk + branches + leaves, a bush has berries …), every `add` placing the same transform (and tint) on each.
+ */
+export class VariantBatch {
+  /** @param {{ parts: { geometry, material }[] }} variant  @param {number} maxCount */
+  constructor(variant, maxCount) {
+    this.batches = variant.parts.map(p => new InstanceBatch(p.geometry, p.material, maxCount));
+  }
+
+  add(matrix4, color = null) {
+    for (const b of this.batches) b.add(matrix4, color);
+  }
+
+  /** Turn shadow casting on or off for every part (small things like flowers are not worth a shadow). */
+  setCastShadow(on) {
+    for (const b of this.batches) b.getMesh().castShadow = on;
+  }
+
+  finalize(scene) {
+    for (const b of this.batches) b.finalize(scene);
   }
 }
 

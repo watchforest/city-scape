@@ -1,12 +1,14 @@
 import * as THREE from 'three';
 import {
   GRASS_COLOR, GROUND_SIDE_COLOR, TERRAIN_MAX_HEIGHT, PATH_COLOR,
-  CLOUD_SHADOW_STRENGTH, CLOUD_SHADOW_SCALE, CLOUD_SHADOW_SPEED, CREST_SHADE,
+  CLOUD_SHADOW_STRENGTH, CREST_SHADE,
 } from '@/config.js';
+import { cloudShadowTexture } from './clouds.js';
 import { getTerrainHeight, getGroundVariation } from './terrain.js';
 import { bakeContactShade } from './groundShade.js';
 import { getParkHalf } from './parkBounds.js';
 import { getLakeBedOffset } from './lake.js';
+import { applyLampLight } from './lampLight.js';
 
 // Ground color palette — interpolated per vertex based on height + variation noise
 // Low/wet: dark moss green → mid grass → high/dry: straw yellow
@@ -28,22 +30,24 @@ const PATH_MID_SHADE  = 1.12; // … and × this along the middle
  * coverage field is above a (noise-wobbled) threshold the grass is replaced by path colour,
  * lighter along the middle, with a little variation. One surface, so nothing can z-fight.
  */
-// Driven from outside every frame (updateGroundShade) — the cloud shadows drift and fade with daylight.
-const _cloudUniforms = { cloudTime: { value: 0 }, cloudAmount: { value: 0 } };
+// Driven from outside every frame (updateGroundShade) — the cloud shadows (a map from clouds.js) fade with daylight.
+const _cloudUniforms = { cloudAmount: { value: 0 } };
 
-/** dt in seconds; daylight 0 (night) … 1 (noon). */
-export function updateGroundShade(dt, daylight) {
-  _cloudUniforms.cloudTime.value += dt;
+/** daylight 0 (night) … 1 (noon). */
+export function updateGroundShade(daylight) {
   _cloudUniforms.cloudAmount.value = daylight * CLOUD_SHADOW_STRENGTH;
 }
 
-function _paintPaths(material, pathTexture, shadeTexture, size) {
+function _paintPaths(material, pathTexture, shadeTexture, size, pitch) {
   const pathColor = new THREE.Color(PATH_COLOR);
+  // The mown football square: (centre x, centre z, half side, yaw); half side 0 = no pitch.
+  const pitchVec = pitch ? new THREE.Vector4(pitch.x, pitch.z, pitch.side / 2, pitch.yaw) : new THREE.Vector4(0, 0, 0, 0);
   material.onBeforeCompile = (shader) => {
+    shader.uniforms.pitch = { value: pitchVec };
     shader.uniforms.pathMap   = { value: pathTexture };
     shader.uniforms.shadeMap  = { value: shadeTexture };
-    shader.uniforms.cloudTime   = _cloudUniforms.cloudTime;
-    shader.uniforms.cloudAmount = _cloudUniforms.cloudAmount;
+    shader.uniforms.cloudShadowMap = { value: cloudShadowTexture };
+    shader.uniforms.cloudAmount    = _cloudUniforms.cloudAmount;
     shader.uniforms.pathMin   = { value: new THREE.Vector2(-size / 2, -size / 2) };
     shader.uniforms.pathSize  = { value: size };
     shader.uniforms.pathColor = { value: pathColor };
@@ -55,7 +59,8 @@ function _paintPaths(material, pathTexture, shadeTexture, size) {
         varying vec2 vPathXZ;
         uniform sampler2D pathMap;
         uniform sampler2D shadeMap;
-        uniform float cloudTime;
+        uniform vec4 pitch;
+        uniform sampler2D cloudShadowMap;
         uniform float cloudAmount;
         uniform vec2 pathMin;
         uniform float pathSize;
@@ -76,21 +81,30 @@ function _paintPaths(material, pathTexture, shadeTexture, size) {
           vec3 base = pathColor * mix(${PATH_EDGE_SHADE.toFixed(2)}, ${PATH_MID_SHADE.toFixed(2)}, pm.g) * grain;
           diffuseColor.rgb = mix(diffuseColor.rgb, base, cover);
 
+          // The football pitch: a square of mown grass in front of the goal, lighter and cut in alternating stripes.
+          if (pitch.z > 0.0) {
+            vec2 pd = vPathXZ - pitch.xy;
+            float across = pd.x * cos(pitch.w) - pd.y * sin(pitch.w);
+            float along  = pd.x * sin(pitch.w) + pd.y * cos(pitch.w);
+            float inside = smoothstep(pitch.z, pitch.z - 1.5, abs(across)) * smoothstep(pitch.z, pitch.z - 1.5, abs(along)) * (1.0 - cover);
+            float stripe = step(0.5, fract(along / 3.2));
+            vec3 mown = vec3(0.30, 0.52, 0.18) * mix(0.86, 1.14, stripe) * (0.96 + 0.08 * pathNoise(vPathXZ * 1.7));
+            diffuseColor.rgb = mix(diffuseColor.rgb, mown, inside * 0.92);
+          }
+
           // Contact shading under trees, benches and landmarks (baked, see groundShade.js).
           vec2 shadeUv = (vPathXZ - pathMin) / pathSize;
           float contact = texture2D(shadeMap, shadeUv).r;
           diffuseColor.rgb *= mix(vec3(0.5, 0.58, 0.68), vec3(1.0), contact);
 
-          // Cloud shadows drifting over the park: large soft blotches, bluish and gone at night.
-          vec2 cp = vPathXZ * ${CLOUD_SHADOW_SCALE.toFixed(4)} - vec2(cloudTime * ${(CLOUD_SHADOW_SPEED * CLOUD_SHADOW_SCALE).toFixed(5)}, 0.0);
-          float cn = pathNoise(cp * 3.0) * 0.55 + pathNoise(cp * 7.0 + 11.3) * 0.3 + pathNoise(cp * 15.0 + 4.1) * 0.15;
-          float cloudShade = smoothstep(0.5, 0.68, cn) * cloudAmount;
+          // The real clouds' shadows (clouds.js draws where they fall): bluish, and gone at night.
+          float cloudShade = (1.0 - texture2D(cloudShadowMap, shadeUv).r) * cloudAmount;
           diffuseColor.rgb *= vec3(1.0) - cloudShade * vec3(0.95, 0.8, 0.55);
         }`);
   };
 }
 
-export function buildGround(scene, rand, pathTexture = null) {
+export function buildGround(scene, rand, pathTexture = null, pitch = null) {
   // ── Terrain grass plane (subdivided so it can deform) ───────────────────────
   const SIZE = getParkHalf() * 2;                // exactly the park, so the grass runs to the frame
   const SEGS = Math.max(40, Math.round(SIZE / 3));   // ~3 units per cell (fine enough for the lake banks)
@@ -151,7 +165,8 @@ export function buildGround(scene, rand, pathTexture = null) {
   geo.computeVertexNormals();
 
   const mat  = new THREE.MeshLambertMaterial({ vertexColors: true });
-  if (pathTexture) _paintPaths(mat, pathTexture, bakeContactShade(SIZE / 2), SIZE);
+  if (pathTexture) _paintPaths(mat, pathTexture, bakeContactShade(SIZE / 2), SIZE, pitch);
+  applyLampLight(mat, 1);
   const mesh = new THREE.Mesh(geo, mat);
   mesh.receiveShadow = true;
   scene.add(mesh);

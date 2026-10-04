@@ -38,6 +38,7 @@ import { RestingOnGrassState } from './states/RestingOnGrassState.js';
 import { DancingState } from './states/DancingState.js';
 import { GatherState } from './states/GatherState.js';
 import { MeetingState } from './states/MeetingState.js';
+import { applyLampLight } from '@/world/lampLight.js';
 
 const SEPARATION_WEIGHT = 2;
 // States in which the agent is deliberately standing/lying/sitting still: no separation push.
@@ -88,7 +89,7 @@ export class AgentEntity extends YUKA.Vehicle {
     this._slopeMul = 1; // smoothed speed multiplier from the ground slope
     this._pitch    = 0; // smoothed lean (radians; + = forward)
     this.mesh.castShadow = true;
-    this.mesh.traverse(c => { if (c.isMesh) c.castShadow = true; });
+    this.mesh.traverse(c => { if (c.isMesh) { c.castShadow = true; for (const m of [c.material].flat()) applyLampLight(m, 0.8); } });
 
     // Play looping clips in place: strip baked-in forward travel (once per asset).
     // Non-looping roles (e.g. Stand-To-Sit) keep their intentional root movement.

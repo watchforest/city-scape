@@ -7,7 +7,7 @@ export const SEED = Number(new URLSearchParams(location.search).get('seed') ?? 4
 // lower them for a cooler/quieter machine.
 export const MAX_PIXEL_RATIO = 1.5;  // cap on devicePixelRatio (1 = crisp-less but cheapest)
 export const MAX_FPS         = 60;   // frame cap (a 120 Hz display would otherwise render 120 fps)
-export const SHADOW_UPDATE_EVERY = 2; // re-render the shadow map every Nth frame (1 = every frame); only agents move
+export const SHADOW_UPDATE_EVERY = 1; // re-render the shadow map every Nth frame (1 = every frame). Every 2nd made the shadows of walking/dancing characters and swaying plants step at half the frame rate; the pass costs well under 1 ms
 
 export const CAM_DIST     = 400;   // for the reference-size park; scaled with the park
 
@@ -18,9 +18,9 @@ export const CAM_DIST     = 400;   // for the reference-size park; scaled with t
 // distance is that × a ratio. Landmarks use their bounding box; a person uses the numbers below.
 export const CAM_PERSON_RADIUS = 2.4;       // bounding radius of a person, head to toe
 export const CAM_PERSON_CENTRE = 2.0;       // height above the feet that the camera looks at
-export const CAM_PERSON_RATIO  = 3;         // click an agent: comfortable distance = contain × this
-export const CAM_PERSON_LIST_RATIO = 4.5;   // pick a team member from the overlay (a bit more context)
-export const CAM_FOLLOW_RATIO  = 8;         // following a walking agent
+export const CAM_PERSON_RATIO  = 4.5;       // click an agent: comfortable distance = contain × this
+export const CAM_PERSON_LIST_RATIO = 6;     // pick a team member from the overlay (a bit more context)
+export const CAM_FOLLOW_RATIO  = 11;        // following a walking agent (leading you to a project)
 export const ISO_ELEVATION = Math.atan(1 / Math.sqrt(2)); // 35.264°
 
 // The park is sized from the landmark layout at startup (src/world/parkBounds.js).
@@ -42,9 +42,7 @@ export const SKY_NIGHT   = 0x0a0a1a;
 
 // Shading (see world/groundShade.js, ground.js, sky.js)
 export const CONTACT_SHADE_TEX_SIZE = 2048; // resolution of the baked "ambient occlusion" texture on the ground
-export const CLOUD_SHADOW_STRENGTH  = 0.4; // how much the drifting cloud shadows darken the grass in daylight
-export const CLOUD_SHADOW_SCALE     = 0.008; // noise frequency: lower = bigger cloud shadows
-export const CLOUD_SHADOW_SPEED     = 6;     // world units/s the shadows drift (matches CLOUD_SPEED in clouds.js)
+export const CLOUD_SHADOW_STRENGTH  = 0.6; // how much the clouds' shadows darken the grass in daylight
 export const CREST_SHADE            = { valley: 0.28, ridge: 0.12, radius: 7 }; // terrain: how strongly valleys darken / ridges lighten
 
 // Decor models (src/world/decor.js, baked by scripts/splitDecor.mjs). The models are already at their category's
@@ -53,15 +51,20 @@ export const CREST_SHADE            = { valley: 0.28, ridge: 0.12, radius: 7 }; 
 // grove regions (nearest of several random centres), each one either conifer or broadleaf and using only a
 // few variants of that family. Variant ids are the decor model ids (see public/assets/models/decor/manifest.json).
 export const DECOR_TREE_FAMILIES = {
-  conifer:   ['tree_01', 'tree_02', 'tree_08', 'tree_09'],
-  broadleaf: ['tree_03', 'tree_04', 'tree_05', 'tree_06', 'tree_07', 'tree_10'],
-  dead:      ['tree_11'],
+  conifer:   ['tree_01', 'tree_02', 'tree_08', 'tree_09', 'tree_n3'],
+  broadleaf: ['tree_03', 'tree_04', 'tree_05', 'tree_06', 'tree_07', 'tree_10', 'tree_n1', 'tree_n2', 'tree_n4', 'tree_n5'],
 };
+// Scattered decor from the nature pack (world/scatter.js); counts are for the reference-size park and scale with its area.
+export const DECOR_BUSH_DENSITY     = 1.0;  // bushes per TREE_DENSITY
+export const DECOR_MUSHROOM_GROUPS  = 35;   // little mushroom groups at the foot of trees
+export const DECOR_LOG_COUNT        = 14;   // fallen logs
+// The football pitch: a mown square in front of the goal.
+export const PITCH_SIDE             = 30;   // side of the mown square
+export const PITCH_BALL_DISTANCE    = 9;    // the ball lies this far in front of the goal mouth
 export const DECOR_GROVES_PER_REF_PARK = 18;   // grove regions for the reference-size park (scaled with park area)
 export const DECOR_CONIFER_GROVE_SHARE = 0.35; // share of groves that are conifer
 export const DECOR_GROVE_VARIANTS      = 3;    // variants a grove uses (at most) from its family
-export const DECOR_STRAY_CHANCE        = 0.04; // a tree ignores its grove: from the other family …
-export const DECOR_DEAD_CHANCE         = 0.015; // … or a dead tree
+export const DECOR_STRAY_CHANCE        = 0.04; // a tree ignores its grove: one from the other family
 // Tree size = grove age × a per-tree roll. The roll runs over DECOR_TREE_SCALE, skewed (rand^bias) so most trees are
 // medium-small and a few are giants; each grove is also younger or older as a whole (DECOR_GROVE_SIZE).
 export const DECOR_TREE_SCALE   = [0.65, 2.1];
@@ -71,13 +74,20 @@ export const DECOR_TREE_SQUASH  = 0.15;              // ± per-tree difference b
 // Rock sizes are drawn log-uniformly from these ranges, so there are many small rocks and fewer big ones.
 export const DECOR_ROCK_SCALE_BIG   = [0.7, 2.0];    // boulders (in groups on slopes and loose)
 export const DECOR_ROCK_SCALE_SMALL = [0.5, 2.6];    // small rocks and pebbles
-export const DECOR_TREE_DENSITY = 1.15;              // tree count relative to the procedural trees (larger trees need more room)
+export const DECOR_TREE_DENSITY = 1.75;             // tree count relative to the procedural trees (larger trees need more room)
 export const DECOR_ROCK_SCATTER = 60;                // loose rocks on flat ground, reference-size park (boulder groups on slopes are separate)
-export const DECOR_STUMP_COUNT  = 28;                // tree stumps, reference-size park
 export const GRASS_CLUMP_SCALE  = [1.2, 2.2];       // grass clump size multiplier range
-export const GRASS_CLUMP_DENSITY = 10;           // clumps relative to the old dome tufts (TUFT_DENSITY in grass.js)
+// Grass is most of the scene's triangles, so far-away chunks (> `near` from the camera, which includes its height — a
+// zoomed-out view is all "far") draw only `farKeep` of their clumps, each `farScale`× bigger. `chunks` × `chunks` per park.
+export const GRASS_LOD = { chunks: 6, near: 170, farKeep: 0.5, farKeepMin: 0.25, farScale: 1.25 }; // (farKeep shrinks with the square root of the park's area, down to farKeepMin)
+export const GRASS_CLUMP_DENSITY = 10;          // clumps relative to the old dome tufts (TUFT_DENSITY in grass.js)
 
 export const BIRD_COUNT = 5;  // birds circling over the reference-size park (scaled with the park); they roost at night
+export const LAMP_LIGHT = { radius: 22, gain: 2.2, texel: 0.6 }; // lamp light pool: radius (world units), brightness, world units per texel of the baked light map
+export const WIND_DIR = 0.6;     // direction the wind blows, radians in the XZ plane (x = cos, z = sin)
+export const WIND_AMP = { tree: 0.045, bush: 0.05, flower: 0.09, flowerpatch: 0.06, grass: 0.45 }; // top displacement ÷ height
+export const BUTTERFLY_COUNT = 8;        // fluttering round the flower patches by day (scaled with the park)
+export const BUTTERFLY_SCALE = [0.6, 0.9]; // size multiplier on the baked model (≈1.5 wingspan)
 export const BIRD_SCALE = [4, 5]; // bird model size multiplier (the model has a 0.7 wingspan)
 export const DUCK_COUNT = 5;   // ducks paddling on the lake
 
@@ -208,8 +218,8 @@ export const AGENT_CLIPS = {
 };
 
 // Terrain
-export const TERRAIN_MAX_HEIGHT  = 10;   // maximum hill height in world units
-export const TERRAIN_SCALE       = 4.0;   // base noise frequency: hill features across a 540-unit span (higher = more, smaller hills)
+export const TERRAIN_MAX_HEIGHT  = 16;   // maximum hill height in world units
+export const TERRAIN_SCALE       = 3.2;   // base noise frequency: hill features across a 540-unit span (higher = more, smaller hills)
 export const TERRAIN_HILL_POWER  = 1.8;   // >1 = broad flat valleys with distinct rises; 1 = evenly rolling
 export const TERRAIN_MESA_STEPS  = 4;    // number of quantization steps (0 = smooth, 4 = mesa-like)
 export const TERRAIN_MESA_BLEND  = 0;    // 0 = fully smooth hills, 1 = fully stepped (terraced mesas)

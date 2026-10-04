@@ -18,6 +18,7 @@ import { DEFAULT_PALETTE } from '@/config.js';
 import { buildAttractionShape, getFootprintRadius, animateCatalog } from './AttractionCatalog.js';
 import { fitLandmark, resolveLandmarkAsset } from './landmarkFit.js';
 import { getTerrainHeight } from '@/world/terrain.js';
+import { applyLampLight } from '@/world/lampLight.js';
 
 function tagProject(obj, proj) {
   obj.userData.project = proj;
@@ -121,7 +122,7 @@ function _wrapCustomModel(model, k) {
   const center = box.getCenter(new THREE.Vector3());
   model.position.set(-center.x * k, -box.min.y * k, -center.z * k);
   model.scale.multiplyScalar(k);
-  model.traverse(c => { if (c.isMesh) { c.castShadow = true; c.receiveShadow = true; } });
+  model.traverse(c => { if (c.isMesh) { c.castShadow = true; c.receiveShadow = true; for (const m of [c.material].flat()) applyLampLight(m, 0.7); } });
   const group = new THREE.Group();
   group.add(model);
   return group;
