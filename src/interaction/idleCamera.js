@@ -151,9 +151,9 @@ export function createIdleCamera({ camController, controls, getAgents, followFra
   const touched = () => { idleFor = 0; closeMenu(); if (on) stop(true); };
   const fromButton = e => !!e.target?.closest?.('[data-tour]');
   window.addEventListener('pointerdown', e => { if (!fromButton(e)) touched(); }, true);
-  window.addEventListener('wheel', touched, { passive: true, capture: true });
+  window.addEventListener('wheel', e => { if (!fromButton(e)) touched(); }, { passive: true, capture: true });   // (scrolling the Follow list is not camera input)
   window.addEventListener('touchstart', e => { if (!fromButton(e)) touched(); }, { passive: true, capture: true });
-  window.addEventListener('pointermove', e => { if (e.buttons) touched(); }, true);   // (just moving the mouse is not input)
+  window.addEventListener('pointermove', e => { if (e.buttons && !fromButton(e)) touched(); }, true);   // (just moving the mouse is not input)
   window.addEventListener('keydown', e => {
     if (e.key === 'i' || e.key === 'I') { e.preventDefault(); toggle(false); idleFor = 0; return; }
     if (e.key === 'f' || e.key === 'F') { e.preventDefault(); toggle(true); idleFor = 0; return; }
