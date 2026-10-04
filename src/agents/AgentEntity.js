@@ -40,6 +40,7 @@ import { GatherState } from './states/GatherState.js';
 import { MeetingState } from './states/MeetingState.js';
 import { VisitingState } from './states/VisitingState.js';
 import { applyLampLight } from '@/world/lampLight.js';
+import { nameColorsFor } from '@/ui/agentColors.js';
 
 const SEPARATION_WEIGHT = 2;
 // States in which the agent is deliberately standing/lying/sitting still: no separation push.
@@ -85,6 +86,7 @@ export class AgentEntity extends YUKA.Vehicle {
     if (asset.type !== 'gltf') throw new Error('AgentEntity: no character model available (person:default failed to load)');
 
     this.mesh = skeletonClone(asset.scene);
+    this.nameColors = nameColorsFor(asset.scene); // the colour of the character's name in bubbles and labels (null = the theme's text colour)
     this.mesh.scale.setScalar(AGENT_SCALE);
     this.mesh.rotation.order = 'YXZ'; // yaw first, then pitch (leaning into slopes) in the agent's own frame
     this._slopeMul = 1; // smoothed speed multiplier from the ground slope

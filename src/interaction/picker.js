@@ -21,12 +21,18 @@ export class Picker {
     renderer.domElement.addEventListener('pointerleave', () => this._setHover(null));
   }
 
-  _setHover(project, x = 0, y = 0) {
-    showHoverLabel(project ? project.name : null, x, y);
-    document.body.style.cursor = project ? 'pointer' : '';
+  /** Show the name tag for a landmark (`project`) or a person (`agent`) under the cursor, or none. */
+  _setHover(project, x = 0, y = 0, agent = null) {
+    if (agent) showHoverLabel(agent.person?.name ?? '', x, y, { kind: 'agent', agent });
+    else showHoverLabel(project ? project.name : null, x, y, { kind: 'landmark' });
+    document.body.style.cursor = project || agent ? 'pointer' : '';
   }
 
-  /** Landmark name tag under the cursor (one raycast per animation frame at most). */
+  /** Same as clicking the person / the landmark (for the clickable name labels). */
+  selectAgent(agent) { this._onAgentClick(agent); }
+  selectProject(project) { this._onProjectClick(project); }
+
+  /** Name tag for the person or landmark under the cursor (one raycast per animation frame at most). */
   _onMove(e) {
     if (e.buttons) { this._setHover(null); return; } // dragging the camera
     this._lastMove = e;
@@ -38,10 +44,16 @@ export class Picker {
       this._mouse.x =  ((m.clientX - rect.left) / rect.width)  * 2 - 1;
       this._mouse.y = -((m.clientY - rect.top)  / rect.height) * 2 + 1;
       this._raycaster.setFromCamera(this._mouse, this._cam);
-      // An agent standing in front of a landmark hides its label.
+      // The nearer of a person and a landmark gets the label (a person standing in front of a landmark hides its label).
       const agentHit = this._raycaster.intersectObjects(this._agentMeshes, true)[0];
       const projHit  = this._raycaster.intersectObjects(this._projectGroups, true)[0];
-      if (!projHit || (agentHit && agentHit.distance < projHit.distance)) { this._setHover(null); return; }
+      if (agentHit && (!projHit || agentHit.distance < projHit.distance)) {
+        let a = agentHit.object;
+        while (a && !a.userData.agentRef) a = a.parent;
+        this._setHover(null, m.clientX, m.clientY, a?.userData.agentRef ?? null);
+        return;
+      }
+      if (!projHit) { this._setHover(null); return; }
       let obj = projHit.object;
       while (obj && !obj.userData.project) obj = obj.parent;
       this._setHover(obj?.userData.project ?? null, m.clientX, m.clientY);

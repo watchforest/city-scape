@@ -192,6 +192,47 @@ export class CameraController {
     this._startAnim(target, this._savedDist, 'zoomout');
   }
 
+  /** 'free' | 'zoomin' | 'idle' | 'follow' | 'zoomout' (see the class comment). */
+  get mode() { return this._mode; }
+
+  /** Remember the view the page opened with, to come back to (goHome). */
+  captureHome() {
+    this._home = {
+      target: this._controls.target.clone(),
+      dist: this._cam.position.distanceTo(this._controls.target),
+      dir: this._cam.position.clone().sub(this._controls.target).normalize(),
+    };
+  }
+
+  /**
+   * Fly back to the view the page opened with, from wherever the camera is (following someone, orbiting on its own,
+   * zoomed on a selection …). It is also the view a later zoomOut returns to.
+   */
+  goHome() {
+    if (this._home) this.flyToView(this._home, true);
+  }
+
+  /**
+   * Fly to a view { target, dist, dir } (dir = from the target towards the camera, unit), from wherever the camera is,
+   * and hand it back to OrbitControls on arrival. `asHome`: also make it the view a later zoomOut returns to.
+   */
+  flyToView(view, asHome = false) {
+    this._controls.autoRotate = false;
+    this._followTarget = null;
+    this._userOrbit = false;
+    this._zoomOutHere = false;
+    this._insetTarget = 0;
+    this._beginInteraction();                       // takes the camera's current pose (and switches OrbitControls off)
+    if (asHome) {
+      this._savedTarget.copy(view.target);
+      this._savedDist = view.dist;
+      this._savedDir.copy(view.dir);
+    }
+    this._dirFrom.copy(this._dir);
+    this._dirTo.copy(view.dir);
+    this._startAnim(view.target, view.dist, 'zoomout');
+  }
+
   release() {
     this._userOrbit = false;
     this._mode = 'free';

@@ -231,6 +231,7 @@ export class DayCycle {
     const isNight = hours < 7 || hours > 19;
     if (isNight === this._cssNight) return;
     this._cssNight = isNight;
+    document.documentElement.dataset.night = isNight ? '1' : '0'; // (for CSS that depends on the theme: ui/agentColors.js)
     const root    = document.documentElement.style;
     if (isNight) {
       root.setProperty('--ui-bg',     'rgba(20,15,10,0.95)');

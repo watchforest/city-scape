@@ -20,6 +20,7 @@
  */
 
 import * as THREE from 'three';
+import { applyNameColor } from './agentColors.js';
 import {
   CHAT_BUBBLE_GAP, CHAT_BUBBLE_CLEARANCE, CHAT_OWN_QUOTE_SHARE,
   CHAT_BUBBLE_MAX_PERSON_RATIO, CHAT_BUBBLE_MIN_SCALE,
@@ -181,6 +182,7 @@ function _spawnBubble(agent, owner) {
   const who = document.createElement('div');
   who.className = 'who';
   who.textContent = (agent.person?.name ?? '').split(' ')[0];
+  applyNameColor(who, agent);
   const text = document.createElement('div');
   text.textContent = quote;                      // textContent: quotes are data, never markup
   el.append(who, text);

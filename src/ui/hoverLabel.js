@@ -1,4 +1,6 @@
-/** Small name tag that follows the cursor while it hovers a landmark. */
+/** Small name tag that follows the cursor while it hovers a landmark or a person (in the person's name colour). */
+
+import { applyNameColor } from './agentColors.js';
 
 let _el = null;
 
@@ -18,19 +20,28 @@ function _ensure() {
   return _el;
 }
 
-let _enabled = true;
+const _enabled = { landmark: true, agent: true };
 
-/** Turn the cursor label on or off (it is off while the always-on landmark labels are showing). */
-export function setHoverLabelEnabled(enabled) {
-  _enabled = enabled;
+/**
+ * Turn the cursor label for one kind of thing ('landmark' | 'agent') on or off — it is off while the always-on
+ * labels for that kind are showing.
+ */
+export function setHoverLabelEnabled(kind, enabled) {
+  _enabled[kind] = enabled;
   if (!enabled && _el) _el.style.display = 'none';
 }
 
-/** Show `text` at the cursor, or hide the label when `text` is null. */
-export function showHoverLabel(text, x, y) {
+/**
+ * Show `text` at the cursor, or hide the label when `text` is null.
+ * @param {{ kind?: 'landmark' | 'agent', agent?: object }} [what]  `agent` gives the label its character's name colour
+ */
+export function showHoverLabel(text, x, y, { kind = 'landmark', agent = null } = {}) {
   const el = _ensure();
-  if (!text || !_enabled) { el.style.display = 'none'; return; }
+  if (!text || !_enabled[kind]) { el.style.display = 'none'; return; }
   if (el.textContent !== text) el.textContent = text;
+  el.classList.remove('agent-name');
+  el.style.color = 'var(--ui-text, #2d1a00)';
+  if (agent) applyNameColor(el, agent);
   el.style.display = 'block';
   // Keep the tag on screen near the right/bottom edges.
   const flipX = x > window.innerWidth - 220, flipY = y > window.innerHeight - 60;
