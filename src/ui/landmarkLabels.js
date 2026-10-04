@@ -37,6 +37,7 @@ export function initLandmarkLabels(cam, renderer, attractionMeshes) {
     el.textContent = instance.name;
     el.style.cssText = `
       position: absolute; left: 0; top: 0; white-space: nowrap; will-change: transform;
+      transition: opacity 0.15s;
       padding: 3px 9px; border-radius: 6px;
       font: 600 12px/1.3 system-ui, sans-serif;
       background: var(--ui-bg, rgba(255,248,230,0.95)); color: var(--ui-text, #2d1a00);
@@ -63,16 +64,43 @@ export function toggleLandmarkLabels() {
   return _visible;
 }
 
-/** Call every frame (cheap: one projection per landmark, and nothing at all while the labels are off). */
+const GAP = 4; // px of clear space kept between two visible labels
+const _shown = []; // screen rectangles of the labels kept visible this frame (reused)
+
+/**
+ * Call every frame (cheap: one projection per landmark, and nothing at all while the labels are off).
+ * Where labels would overlap on screen, the one nearest the camera wins and the farther ones are hidden.
+ */
 export function updateLandmarkLabels() {
   if (!_visible) return;
   const w = _renderer.domElement.clientWidth, h = _renderer.domElement.clientHeight;
+
+  // Project everything first, then decide in order of distance from the camera.
+  const onScreen = [];
   for (const l of _labels) {
     _v.copy(l.pos).project(_cam);
-    const onScreen = _v.z > -1 && _v.z < 1 && Math.abs(_v.x) < 1.1 && Math.abs(_v.y) < 1.1;
-    if (!onScreen) { l.el.style.display = 'none'; continue; }
-    l.el.style.display = 'block';
-    // Centred above the point; the tag's own size is used so it stays centred whatever the text length.
-    l.el.style.transform = `translate(${((_v.x + 1) / 2) * w}px, ${((1 - _v.y) / 2) * h}px) translate(-50%, -100%)`;
+    if (_v.z > -1 && _v.z < 1 && Math.abs(_v.x) < 1.1 && Math.abs(_v.y) < 1.1) {
+      l.sx = ((_v.x + 1) / 2) * w;
+      l.sy = ((1 - _v.y) / 2) * h;
+      l.dist = l.pos.distanceToSquared(_cam.position);
+      onScreen.push(l);
+    } else if (l.shown !== 'off') {
+      l.el.style.display = 'none';
+      l.shown = 'off';
+    }
   }
+  onScreen.sort((a, b) => a.dist - b.dist);
+
+  _shown.length = 0;
+  onScreen.forEach((l, rank) => {
+    if (l.shown === 'off' || l.shown === undefined) { l.el.style.display = 'block'; l.shown = 'on'; }
+    if (!l.w) { l.w = l.el.offsetWidth; l.h = l.el.offsetHeight; } // measured once, when it first appears
+    // Anchored at the bottom centre of the tag.
+    const x0 = l.sx - l.w / 2 - GAP, x1 = l.sx + l.w / 2 + GAP, y0 = l.sy - l.h - GAP, y1 = l.sy + GAP;
+    const blocked = _shown.some(r => x0 < r[2] && x1 > r[0] && y0 < r[3] && y1 > r[1]);
+    if (!blocked) _shown.push([x0, y0, x1, y1]);
+    l.el.style.opacity = blocked ? '0' : '1';
+    l.el.style.zIndex = String(onScreen.length - rank); // nearer on top
+    l.el.style.transform = `translate(${l.sx}px, ${l.sy}px) translate(-50%, -100%)`;
+  });
 }
