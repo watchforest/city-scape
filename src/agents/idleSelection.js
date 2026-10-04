@@ -19,9 +19,10 @@
 
 import {
   PROB_WALK, PROB_CHAT, IDLE_WEIGHTS, NIGHT_WEIGHT_BOOST, CHAT_SEEK_RADIUS, GATHER_MAX_SIZE, GATHER_JOIN_CHANCE,
-  DANCE_GATHER_RADIUS, DANCE_START_CROWD, DANCE_CROWD_BOOST, DANCE_JOIN_CHANCE,
+  DANCE_GATHER_RADIUS, DANCE_START_CROWD, DANCE_CROWD_BOOST, DANCE_JOIN_CHANCE, BENCH_SOCIAL_RADIUS, BENCH_SOCIAL_BOOST, BENCH_JOIN_CHANCE,
 } from '@/config.js';
 import { nearby, isFreeWalker } from './crowd.js';
+import { lonelySitterNear } from '@/world/benchRegistry.js';
 
 /**
  * @param {AgentEntity}   agent
@@ -33,6 +34,9 @@ import { nearby, isFreeWalker } from './crowd.js';
  *         | { kind: 'dancing', partners?: AgentEntity[], join?: object }}
  */
 export function selectNextBehaviour(agent, allAgents, rand, night = 0) {
+  // Someone is sitting alone on a bench not too far off: sometimes go and keep them company.
+  if (lonelySitterNear(agent.position.x, agent.position.z, BENCH_SOCIAL_RADIUS) && rand() < BENCH_JOIN_CHANCE) return { kind: 'sitting' };
+
   const roll = rand();
 
   if (roll < PROB_WALK) return { kind: 'walking' };
@@ -76,6 +80,8 @@ function pickIdleActivity(agent, allAgents, rand, night) {
   for (const [key, base] of Object.entries(IDLE_WEIGHTS)) {
     weights[key] = base * (agent.idleBias?.[key] ?? 1) * Math.max(0, 1 + (NIGHT_WEIGHT_BOOST[key] ?? 0) * night);
   }
+  // Someone is sitting alone on a bench nearby: joining them is tempting.
+  if (lonelySitterNear(agent.position.x, agent.position.z, BENCH_SOCIAL_RADIUS)) weights.bench *= BENCH_SOCIAL_BOOST;
   weights.dance = invitable >= DANCE_START_CROWD
     ? weights.dance * (1 + DANCE_CROWD_BOOST * (invitable - DANCE_START_CROWD))
     : 0;

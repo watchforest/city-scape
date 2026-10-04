@@ -19,6 +19,8 @@
  * and optionally:
  *   transitions       — true to wait for sit-down / stand-up animations (default false)
  *   onSettled(a)      — called when the settle phase ends and the stay timer starts
+ *   onLeave(a)        — called when the stay is over and the agent is about to stand up (sit states only)
+ *   snapToSpot        — true to ease the agent exactly onto the spot while it settles (default false)
  *
  * While walking to the spot the agent reports state 'walking', so UI that keys on
  * state (sleep Zs, chat partner search) only reacts once it has actually settled.
@@ -64,15 +66,18 @@ export class SeekSpotState extends YUKA.State {
         break;
       }
       case 'settle':
+        this._glideToSpot(agent);
         if (!this.transitions || agent.clipFinished()) {
           this.onSettled(agent);
           this._phase = 'stay';
         }
         break;
       case 'stay':
+        this._glideToSpot(agent);
         this._timer -= agent._lastDelta ?? 0;
         if (this._timer <= 0) {
           if (this.transitions) {
+            this.onLeave?.(agent);
             agent.standUp();
             this._phase = 'leave';
           } else {
@@ -84,6 +89,17 @@ export class SeekSpotState extends YUKA.State {
         if (agent.clipFinished()) agent.stateMachine.changeTo('walking');
         break;
     }
+  }
+
+  /**
+   * Arriving counts as being within ARRIVE_TOLERANCE of the spot, so the agent stops up to a unit short or to the side.
+   * For spots that need to be exact (a bench seat) it eases onto the spot while it settles instead.
+   */
+  _glideToSpot(agent) {
+    if (!this.snapToSpot || !this._spot) return;
+    const k = 1 - Math.exp(-8 * (agent._lastDelta ?? 0.016));
+    agent.position.x += (this._spot.x - agent.position.x) * k;
+    agent.position.z += (this._spot.z - agent.position.z) * k;
   }
 
   exit(agent) {

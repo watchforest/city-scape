@@ -40,6 +40,9 @@ const BENCH_FOOTPRINT   = 2.4;  // obstacle radius registered per bench (half it
 const DECOR_BENCH_FOOTPRINT    = 3.2;
 const DECOR_BENCH_SEAT_TOP     = 1.0; // seat height of the baked bench (0.63 × the 1.59 bake scale)
 const DECOR_BENCH_STAND_OFF    = 1.7; // agents stop this far in front of its centre (seat front edge at ≈ 1.0), then sit back onto it
+// Two seats along the 6.1-long bench, from its middle. A seated figure is ≈ 3.1 wide with its arms, so at ±1.45 its outer arm
+// reached the bench's end; closer together they sit clear of the ends (and the inner arms just touch).
+const DECOR_BENCH_SEATS        = [-1.1, 1.1];
 const DECOR_BENCH_SHADE_RADIUS = 4;   // contact shadow around it
 const DECOR_BENCH_BIN_OFFSET   = 3.9; // a bin stands this far from the bench centre, just past its end
 const BENCH_PATH_GAP    = 1.0;  // a bench's centre must be at least this far outside any path surface
@@ -628,7 +631,7 @@ export function buildEnvironment(scene, projectNodes, pathGraph, rand, pathSegme
   // Benches: the decor model (one batch per part: seat, back, legs) or the four procedural parts, plus bins.
   const benchModel = decor?.bench?.[0] ?? null;
   const benchFootprint = benchModel ? DECOR_BENCH_FOOTPRINT : BENCH_FOOTPRINT;
-  const benchSeat = benchModel ? [DECOR_BENCH_SEAT_TOP, DECOR_BENCH_STAND_OFF] : []; // → registerBench(seatTop, standOff)
+  const benchSeat = benchModel ? [DECOR_BENCH_SEAT_TOP, DECOR_BENCH_STAND_OFF, DECOR_BENCH_SEATS] : []; // → registerBench(seatTop, standOff, seatOffsets)
   const benchBatches = {
     ...(benchModel
       ? { model: benchModel.parts.map(p => new InstanceBatch(p.geometry, p.material, cap(MAX_BENCHES))) }

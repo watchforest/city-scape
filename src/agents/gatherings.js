@@ -11,7 +11,8 @@
  * Agents carry:  gathering (the object, or null), gatherArrived, gatherPhase
  *                ('assembling' | 'activity').
  * Gathering:     { id, kind: 'chat' | 'dance', center, radius, members[], spots: Map,
- *                  stage: 'assembling' | 'active', t, elapsed, duration, clip, speaker }
+ *                  stage: 'assembling' | 'active', t, elapsed, duration, clip, speaker,
+ *                  seated? — true for two people talking on a bench (createSeated) }
  *
  * The manager is ticked from AgentController.update().
  */
@@ -89,6 +90,38 @@ export class GatheringManager {
     return g;
   }
 
+  /**
+   * Two people sitting side by side on a bench start a conversation. Nobody has to walk anywhere, so it begins at once
+   * and has no duration of its own: it lasts until either of them gets up (see endSeated, SittingOnBenchState).
+   * @returns the gathering, or null if either is already in one
+   */
+  createSeated(a, b) {
+    if (a.gathering || b.gathering) return null;
+    const g = {
+      id: this._nextId++, kind: 'chat', seated: true,
+      center: { x: (a.position.x + b.position.x) / 2, z: (a.position.z + b.position.z) / 2 }, radius: 0,
+      members: [a, b], spots: new Map(),
+      stage: 'active', active: true, t: 0, elapsed: 0, duration: Infinity, clip: null, speaker: null,
+    };
+    this._list.push(g);
+    for (const m of g.members) { m.gathering = g; m.gatherPhase = 'activity'; }
+    return g;
+  }
+
+  /** End the seated conversation `agent` is in, for both of them (they stay seated or stand up as they were). */
+  endSeated(agent) {
+    const g = agent.gathering;
+    if (g?.seated) this._endSeated(g);
+  }
+
+  _endSeated(g) {
+    for (const m of g.members) {
+      if (m.gathering === g) { m.gathering = null; m.gatherPhase = null; }
+    }
+    g.members = [];
+    this._list = this._list.filter(x => x !== g);
+  }
+
   /** The running dance nearest to `agent` within `radius`, if it has room for one more. */
   findDanceToJoin(agent, radius = DANCE_JOIN_RADIUS) {
     let best = null, bestD = radius * radius;
@@ -127,6 +160,11 @@ export class GatheringManager {
   /** Tick: arrivals → start, timeouts, interrupted members, and ending together. */
   update(dt) {
     for (const g of [...this._list]) {
+      if (g.seated) {
+        // Seated conversations are ended by the sitters themselves; just guard against one being taken away mid-sit.
+        if (g.members.some(a => a.gathering !== g || a.stopped)) this._endSeated(g);
+        continue;
+      }
       g.t += dt;
 
       // Members who were taken away (clicked, sent on an errand, …) leave quietly.

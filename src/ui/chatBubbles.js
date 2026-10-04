@@ -124,7 +124,7 @@ export function updateChatBubbles(agents, dt) {
 
     // Where the speaker's head and feet are on the screen.
     const ap = b.agent.mesh.position;
-    b.anchor.set(ap.x, ap.y + HEAD_HEIGHT, ap.z);
+    b.anchor.set(ap.x, ap.y + _headHeight(b.agent), ap.z);
     _v.copy(b.anchor).project(_cam);
     _foot.set(ap.x, ap.y, ap.z).project(_cam);
     const sx = (_v.x + 1) / 2 * W, sy = (1 - _v.y) / 2 * H;
@@ -143,6 +143,10 @@ export function updateChatBubbles(agents, dt) {
     }
   }
 }
+
+/** Height of the top of the head above the agent's origin: lower when seated (the sit-down animation folds the body). */
+const SEATED_DROP = 1.5;
+const _headHeight = agent => HEAD_HEIGHT - (agent._sitOffset ? SEATED_DROP * agent._sitBlend : 0);
 
 const _easeOut = t => 1 - (1 - t) * (1 - t);
 const _easeOutBack = t => { const c1 = 1.9, c3 = c1 + 1; return 1 + c3 * Math.pow(t - 1, 3) + c1 * Math.pow(t - 1, 2); };
@@ -185,7 +189,7 @@ function _spawnBubble(agent, owner) {
   const ap = agent.mesh.position;
   _bubbles.push({
     el, agent, owner, age: 0,
-    anchor: new THREE.Vector3(ap.x, ap.y + HEAD_HEIGHT, ap.z),
+    anchor: new THREE.Vector3(ap.x, ap.y + _headHeight(agent), ap.z),
     h: el.offsetHeight + TAIL_PX,               // measured once; the size doesn't change
   });
 }
