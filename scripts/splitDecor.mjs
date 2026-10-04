@@ -2,7 +2,7 @@
  * Offline decor bake — splits the model packs in decor_models/ into one small, optimised GLB per
  * model and writes public/assets/models/decor/manifest.json describing them.
  *
- * Each static model (trees, rocks, grass, stump, bench, lamp) is:
+ * Each static model (trees, rocks, grass, bench, lamp) is:
  *   - cut out of its pack (one GLB per model, only the materials/textures it uses; a model may have
  *     several mesh parts, e.g. the bench's seat, back and legs),
  *   - baked to the origin: world transform applied, centred in X/Z, base on y = 0,
@@ -33,7 +33,7 @@ const OUT = path.join(__dirname, '..', 'public', 'assets', 'models', 'decor');
 
 /**
  * Per category: what the baked models look like.
- *   height  — world height every model is normalised to (trees, stump, grass, lamp), or
+ *   height  — world height every model is normalised to (trees, grass, lamp), or
  *   length  — world extent along X after rotateY (bench), or
  *   scale   — a fixed scale applied to all models of the category instead (rocks keep their relative sizes)
  *   rotateY — turn the model about Y before anything else (radians), to bring its length along X / its front to +Z
@@ -45,12 +45,21 @@ const OUT = path.join(__dirname, '..', 'public', 'assets', 'models', 'decor');
  */
 const CATEGORIES = {
   tree:  { height: 11,  maxTris: 700, texture: 256, error: 0.08, flat: true },
-  stump: { height: 1.3, maxTris: 300, texture: 256, flat: true },
   rock:  { scale: 2.6,  maxTris: 120, texture: 256, flat: true },
   grass: { height: 1.3, maxTris: 60,  texture: 0 },
   // Bench: long axis along X, backrest on −Z, seat facing +Z (the model has its length on Z, front on +X).
   bench: { length: 6.1, rotateY: -Math.PI / 2, maxTris: 1000, texture: 512, baseColorOnly: true },
   lamp:  { height: 8.6, maxTris: 1000, texture: 0 }, // not simplified: its 8-triangle glass would not survive
+  // From the nature pack (flat-coloured materials, no textures). Its native sizes are used, times `scale`.
+  bush:     { scale: 0.9, maxTris: 300, texture: 0, flat: true },
+  log:      { scale: 0.9, maxTris: 250, texture: 0, flat: true },   // fallen trunks
+  flower:   { scale: 1.3, maxTris: 300, texture: 0, flat: true },
+  mushroom: { scale: 1.6, maxTris: 130, texture: 0, flat: true },
+  // Flower patches (textured, tiny in the source: ≈ 0.2 wide).
+  flowerpatch: { scale: 8, maxTris: 400, texture: 256 },
+  // A single football and a single goal in the park, so they can afford to be detailed.
+  ball: { height: 1.0, maxTris: 700, texture: 256, baseColorOnly: true, error: 0.04 },
+  goal: { height: 6.0, maxTris: 1e9, texture: 0 },                  // frame + net, 21k triangles for the one goal
 };
 
 /** Static models: which mesh nodes of which pack make up which model (null = skip). */
@@ -64,7 +73,8 @@ function staticModels(file, doc) {
       const name = n.getName();
       let category = null;
       if (file.includes('trees')) {
-        if (/^_12_tree/.test(name)) category = 'stump';  // a tree stump, despite the name
+        // Deliberately left out: the dead (bare) tree `_11_tree` and the tree stump `_12_tree` — the park should look alive.
+        if (/^_1[12]_tree/.test(name)) category = null;
         else if (/^Rock_/.test(name)) category = 'rock';
         else if (/_tree/.test(name)) category = 'tree';
       } else if (file.includes('rocks') && /^SM_Rocks_/.test(name)) category = 'rock';
@@ -72,11 +82,55 @@ function staticModels(file, doc) {
       if (category) models.push({ id: modelId(file, category, name), category, nodes: [n] });
       else console.log(`skip   ${file} / ${name}`);
     }
+  } else if (file.includes('nature')) {
+    models.push(...natureModels(meshNodes));
+  } else if (file.includes('flowers')) {
+    // Flower patches. (The loose leaves, layers and stem in the file are only parts of other flowers.)
+    models.push(...groupModels(meshNodes, /^(Yellow Flower Patch|Dandelion Patch|Dandelions|Yellow Flowers|Dandelion)$/, 'flowerpatch', 'flowerpatch'));
+  } else if (file.includes('football')) {
+    models.push({ id: 'ball_01', category: 'ball', nodes: meshNodes });
+  } else if (file.includes('goal')) {
+    models.push({ id: 'goal_01', category: 'goal', nodes: meshNodes });
   } else if (file.includes('bench')) {
     models.push({ id: 'bench_01', category: 'bench', nodes: meshNodes });
   } else if (file.includes('light')) {
     models.push({ id: 'lamp_01', category: 'lamp', nodes: meshNodes });
   }
+  return models;
+}
+
+/** The named group a mesh node belongs to: its parent (packs from Blender put a named empty above each mesh). */
+const groupOf = n => n.getParentNode()?.getName() ?? n.getName();
+
+/**
+ * One model per distinct group name matching `re` (in file order), made of all the mesh nodes in that group.
+ * `idPrefix` + a running number name them (flower_01, flower_02 …).
+ */
+function groupModels(meshNodes, re, category, idPrefix, extra = {}) {
+  const names = [...new Set(meshNodes.map(groupOf))].filter(g => re.test(g));
+  return names.map((g, i) => ({
+    id: `${idPrefix}_${String(i + 1).padStart(2, '0')}`, category,
+    nodes: meshNodes.filter(n => groupOf(n) === g), ...extra,
+  }));
+}
+
+/**
+ * The low-poly nature pack: five trees (trunk + branches + leaves are separate meshes), three fallen
+ * trunks, six rocks, bushes, flowers and mushrooms. The terrain tile and the grass tufts are not used.
+ * Tree 3 is a pine, 4 a birch, 5 an oak, 1 and 2 other broadleaf trees (see DECOR_TREE_FAMILIES in config.js).
+ */
+function natureModels(meshNodes) {
+  const models = [];
+  for (let t = 1; t <= 5; t++) {
+    const parts = meshNodes.filter(n => new RegExp(`^(Tronco|Ramas|Hojas)${t}_\\d+$`).test(groupOf(n)));
+    if (parts.length) models.push({ id: `tree_n${t}`, category: 'tree', nodes: parts });
+    // (The pack's stumps, `Tronco<t>.001`, are left out on purpose: the park should look alive.)
+  }
+  models.push(...groupModels(meshNodes, /^Cylinder(\.\d+)?_\d+$/, 'log', 'log'));
+  models.push(...groupModels(meshNodes, /^rock\d_\d+$/, 'rock', 'rock_n', { scale: 1.5 }));   // (bigger than the pack's own scale: the other rocks are ≈ 2.4 across)
+  models.push(...groupModels(meshNodes, /^bus[hf]F?\d_\d+$/, 'bush', 'bush'));                 // (the pack misspells one "busfF3")
+  models.push(...groupModels(meshNodes, /^Flower\d(VAR)?_\d+$/, 'flower', 'flower'));
+  models.push(...groupModels(meshNodes, /^Mushroom\d(VAR)?_\d+$/, 'mushroom', 'mushroom'));
   return models;
 }
 
@@ -166,7 +220,7 @@ async function bakeStatic(file, model) {
   for (const m of root.listMeshes()) if (!keepMeshes.has(m)) m.dispose();
 
   // Bake to the origin: rotation, world transform, centre X/Z, base on y = 0, category scale.
-  const k = cfg.height ? cfg.height / (mx[1] - mn[1]) : cfg.length ? cfg.length / (mx[0] - mn[0]) : cfg.scale;
+  const k = cfg.height ? cfg.height / (mx[1] - mn[1]) : cfg.length ? cfg.length / (mx[0] - mn[0]) : (model.scale ?? cfg.scale);
   const place = mul(scaleM(k), moveM(-(mn[0] + mx[0]) / 2, -mn[1], -(mn[2] + mx[2]) / 2));
   for (const p of parts) {
     p.node.setMatrix(IDENTITY);
@@ -209,7 +263,15 @@ async function bakeStatic(file, model) {
 
 // ── Birds (skinned + animated) ─────────────────────────────────────────────────────
 
-async function splitBirds(file) {
+/**
+ * Cut a skinned, animated pack apart by armature (birds: five; butterfly: one), each keeping its own skeleton, mesh and
+ * the animation tracks that drive it.
+ *   rotate          turn about Y so the creature faces +Z
+ *   scale           uniform scale folded into the armature (the source sizes are not ours)
+ *   zeroTranslation move the armature to the origin (the birds are spread out as a flock; the butterfly's parts are
+ *                   offset relative to its armature, so it must stay)
+ */
+async function splitSkinned(file, { category, rotate, scale = 1, zeroTranslation }) {
   const names = (await io.read(path.join(SRC, file))).getRoot().listNodes()
     .filter(n => /^Armature/.test(n.getName()) && !n.getParentNode()?.getName().startsWith('Armature')).map(n => n.getName());
 
@@ -236,29 +298,34 @@ async function splitBirds(file) {
     // Out of the flock: the pack's parents carry a unit scale (FBX), so fold their world transform into the
     // armature, then move it to the origin and turn it so the bird flies towards +Z (it models towards −Z).
     const placed = mul(Array.from(armature.getParentNode().getWorldMatrix()), Array.from(armature.getMatrix()));
-    placed[12] = placed[13] = placed[14] = 0;
+    if (zeroTranslation) placed[12] = placed[13] = placed[14] = 0;
 
     const scene = root.listScenes()[0];
     for (const child of scene.listChildren()) scene.removeChild(child);
     armature.getParentNode()?.removeChild(armature);
     scene.addChild(armature);
     for (const n of root.listNodes()) if (!mine.has(n)) n.dispose();
-    armature.setMatrix(mul(rotY(Math.PI), placed));
+    armature.setMatrix(mul(rotY(rotate), mul(scaleM(scale), placed)));
 
     await doc.transform(prune());
-    const mesh = root.listMeshes()[0];
-    await writeModel(doc, 'bird', `bird_${String(i + 1).padStart(2, '0')}`, {
-      tris: countTris(mesh), parts: mesh.listPrimitives().length, skinned: true,
+    const meshes = root.listMeshes();
+    const id = `${category}_${String(i + 1).padStart(2, '0')}`;
+    const tris = meshes.reduce((t, m) => t + countTris(m), 0);
+    await writeModel(doc, category, id, {
+      tris, parts: meshes.reduce((t, m) => t + m.listPrimitives().length, 0), skinned: true,
       animations: root.listAnimations().map(a => a.getName()),
     });
-    console.log(`bird  bird_${String(i + 1).padStart(2, '0')}       ${String(countTris(mesh)).padStart(5)} tris   from ${file} (${name})`);
+    console.log(`${category.padEnd(5)} ${id.padEnd(14)} ${String(tris).padStart(5)} tris   from ${file} (${name})`);
   }
 }
 
 // ── Run ───────────────────────────────────────────────────────────────────────────
 
 for (const file of readdirSync(SRC).filter(f => f.endsWith('.glb')).sort()) {
-  if (file.includes('bird')) { await splitBirds(file); continue; }
+  // The birds model towards −Z and are spread out as a flock; the butterfly's head is at its +X end, and ≈ 7 units
+  // across in the source (we want ≈ 1.5).
+  if (file.includes('bird')) { await splitSkinned(file, { category: 'bird', rotate: Math.PI, zeroTranslation: true }); continue; }
+  if (file.includes('butterfly')) { await splitSkinned(file, { category: 'butterfly', rotate: -Math.PI / 2, scale: 0.22, zeroTranslation: false }); continue; }
   const listing = await io.read(path.join(SRC, file));
   for (const model of staticModels(file, listing)) await bakeStatic(file, model);
 }
