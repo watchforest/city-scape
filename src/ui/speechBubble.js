@@ -24,13 +24,13 @@ export function initSpeechBubble(renderer, cam, onWalkToProject) {
     #speech-bubble {
       position: fixed;
       display: none;
-      max-width: 260px;
+      max-width: 340px;
       background: var(--ui-bg, rgba(255,248,230,0.97));
       border: 1px solid var(--ui-border, #c8a850);
-      border-radius: 8px;
-      padding: 12px 14px;
+      border-radius: 10px;
+      padding: 14px 18px 15px;
       color: var(--ui-text, #2d1a00);
-      font: 12px/1.6 system-ui, sans-serif;
+      font: 14px/1.55 system-ui, sans-serif;
       pointer-events: none;
       z-index: 200;
       transform: translate(-50%, -100%);
@@ -49,19 +49,22 @@ export function initSpeechBubble(renderer, cam, onWalkToProject) {
     }
     #speech-bubble .name {
       color: var(--ui-text, #2d1a00);
+      font-size: 15px;
       font-weight: bold;
-      margin-bottom: 4px;
+      margin-bottom: 6px;
     }
     #speech-bubble .bio {
-      color: var(--ui-muted, #8a7040);
-      margin-bottom: 10px;
+      color: var(--ui-text, #2d1a00);   /* the muted brown was hard to read at this size */
+      opacity: 0.85;
+      font-size: 14.5px;
+      margin-bottom: 12px;
     }
     #speech-bubble .options { display: flex; gap: 8px; flex-wrap: wrap; }
     #speech-bubble .opt-btn {
       background: var(--ui-tag-bg, #f0e0b0);
       border: 1px solid var(--ui-border, #c8a850);
       color: var(--ui-accent, #8B6914);
-      font: 11px system-ui;
+      font: 12.5px system-ui;
       padding: 4px 10px;
       border-radius: 4px;
       cursor: pointer;
@@ -77,7 +80,7 @@ export function initSpeechBubble(renderer, cam, onWalkToProject) {
       background: var(--ui-tag-bg, #f0e0b0);
       border: 1px solid var(--ui-border, #c8a850);
       color: var(--ui-accent, #8B6914);
-      font: 11px system-ui;
+      font: 12.5px system-ui;
       padding: 5px 10px;
       border-radius: 4px;
       cursor: pointer;
