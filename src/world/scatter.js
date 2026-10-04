@@ -11,7 +11,7 @@ import * as THREE from 'three';
 import { VariantBatch } from '@/utils/InstanceBatch.js';
 import { getTerrainHeight } from './terrain.js';
 import { getParkHalf } from './parkBounds.js';
-import { isOccupied, registerCircle } from './obstacleRegistry.js';
+import { isOccupied, registerCircle, registerSolid } from './obstacleRegistry.js';
 import { addContactShade } from './groundShade.js';
 import { PITCH_SIDE, PITCH_BALL_DISTANCE } from '@/config.js';
 
@@ -54,6 +54,7 @@ export function scatterBushes(rand, variants, { count, randomClear }) {
     batches.get(v.id).add(place(pos.x, getTerrainHeight(pos.x, pos.z) - 0.05, pos.z, rand() * Math.PI * 2, wide, tall, wide), tint(rand));
     addContactShade(pos.x, pos.z, 1.8 * s, 0.32);
     registerCircle(pos.x, pos.z, 1.3 * s); // trees, rocks and the like keep off it
+    registerSolid(pos.x, pos.z, 0.8 * s);  // people walk round it
   }
   return [...batches.values()];
 }

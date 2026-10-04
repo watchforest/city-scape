@@ -75,6 +75,10 @@ export class WalkingState extends YUKA.State {
           if (agent.gatherings.create('dance', agent, behaviour.partners, duration)) return;
         }
         // Couldn't gather anyone — keep strolling.
+      } else if (behaviour.kind === 'visiting') {
+        agent.visitTarget = behaviour.target;
+        agent.stateMachine.changeTo('visiting'); // (falls back to walking if the sitter is gone)
+        return;
       } else if (behaviour.kind !== 'walking') {
         agent.stateMachine.changeTo(behaviour.kind); // sitting | sittingGround | resting
         return;

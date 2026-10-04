@@ -14,7 +14,7 @@ import * as THREE from 'three';
 import { REED_COLOR } from '@/config.js';
 import { shorePoint, getLakeFootprint } from './lake.js';
 import { getParkBounds, getParkHalf, getParkAreaScale } from './parkBounds.js';
-import { registerCircle, registerEllipse, isOccupied } from './obstacleRegistry.js';
+import { registerCircle, registerEllipse, registerSolid, isOccupied } from './obstacleRegistry.js';
 import { registerBench } from './benchRegistry.js';
 import { isOnPath } from '@/paths/pathTexture.js';
 import { addContactShade } from './groundShade.js';
@@ -317,6 +317,7 @@ function addDecorTree(batches, { variant: v, age }, x, z, rand) {
   const l = 0.85 + rand() * 0.3, warm = rand() * 0.25;
   addContactShade(x, z, crownR * 1.5, 0.5);
   registerCircle(x, z, 1.2 * s); // trunk: keeps bushes, rocks and grass out of it
+  registerSolid(x, z, 0.45 * s);  // … and people walk round it
   const spot = { x, z, r: crownR };
   batches.get(v.id).add(
     _compose(x, getTerrainHeight(x, z) - 0.15 * s, z, rand() * Math.PI * 2, s / Math.sqrt(squash), s * squash, s / Math.sqrt(squash)),
@@ -652,6 +653,7 @@ export function buildEnvironment(scene, projectNodes, pathGraph, rand, pathSegme
     _placeProps(samples, lampSpots, LAMP_SPACING, lampSides, lampOffsets, acceptLamp, (x, z) => {
       addLamppost(lampBatches, x, z);
       registerCircle(x, z, 1.0);
+      registerSolid(x, z, 0.4);
     });
   }
 
@@ -664,6 +666,9 @@ export function buildEnvironment(scene, projectNodes, pathGraph, rand, pathSegme
       addBench(benchBatches, x, z, facingAngle);
       registerCircle(x, z, benchFootprint);
       registerBench(x, z, facingAngle, ...benchSeat);
+      // Walkers go round it: three small circles along its length (small enough to leave the seat's stand point free).
+      const ax = Math.cos(facingAngle), az = -Math.sin(facingAngle), half = benchFootprint * 0.6;
+      for (const k of [-1, 0, 1]) registerSolid(x + ax * half * k, z + az * half * k, 0.6);
     });
   }
 
@@ -764,6 +769,7 @@ function _buildRocks(scene, rand, variants) {
     const r = Math.max(v.size[0], v.size[2]) / 2 * scale;
     const l = 0.85 + rand() * 0.3;
     addContactShade(x, z, r * 1.6, 0.4);
+    registerSolid(x, z, r * 0.8);
     // Sunk a little into the ground so a rock on a slope doesn't hover on its downhill side; each rock
     // is also stretched a little differently in width, depth and height.
     batches.get(v.id).add(

@@ -18,10 +18,11 @@
  */
 
 import {
-  PROB_WALK, PROB_CHAT, IDLE_WEIGHTS, NIGHT_WEIGHT_BOOST, CHAT_SEEK_RADIUS, GATHER_MAX_SIZE, GATHER_JOIN_CHANCE,
+  PROB_WALK, PROB_CHAT, VISIT_CHANCE, VISIT_RADIUS, IDLE_WEIGHTS, NIGHT_WEIGHT_BOOST, CHAT_SEEK_RADIUS, GATHER_MAX_SIZE, GATHER_JOIN_CHANCE,
   DANCE_GATHER_RADIUS, DANCE_START_CROWD, DANCE_CROWD_BOOST, DANCE_JOIN_CHANCE, BENCH_SOCIAL_RADIUS, BENCH_SOCIAL_BOOST, BENCH_JOIN_CHANCE,
 } from '@/config.js';
 import { nearby, isFreeWalker } from './crowd.js';
+import { isVisitable } from './states/VisitingState.js';
 import { lonelySitterNear } from '@/world/benchRegistry.js';
 
 /**
@@ -36,6 +37,13 @@ import { lonelySitterNear } from '@/world/benchRegistry.js';
 export function selectNextBehaviour(agent, allAgents, rand, night = 0) {
   // Someone is sitting alone on a bench not too far off: sometimes go and keep them company.
   if (lonelySitterNear(agent.position.x, agent.position.z, BENCH_SOCIAL_RADIUS) && rand() < BENCH_JOIN_CHANCE) return { kind: 'sitting' };
+
+  // Someone is sitting close by: sometimes go over and talk to them (they stay seated).
+  if (rand() < VISIT_CHANCE) {
+    const sitters = nearby(agent, allAgents, VISIT_RADIUS, isVisitable)
+      .sort((a, b) => a.position.squaredDistanceTo(agent.position) - b.position.squaredDistanceTo(agent.position));
+    if (sitters.length) return { kind: 'visiting', target: sitters[0] };
+  }
 
   const roll = rand();
 

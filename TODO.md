@@ -24,11 +24,12 @@ Open work, roughly in the order we plan to take it. Tick items off or delete the
 
 ## Small technical items
 
-- [ ] Remove the idle gap-fill ("bridge") code in `paths/PathRenderer.js`: the thinned network rarely has parallel paths, so it hardly does anything
-- [ ] Live check of chat bubble turn-taking and overlap between nearby conversations (only the logic was tested, never watched in real time)
-- [ ] Trees, lamps, benches and the lake still don't block walking agents (only landmarks and other agents do, `agents/collision.js`)
-- [ ] Sitting/resting/gathering spots are not checked against the blocked landmark circles
-- [ ] Chatting with seated or resting agents (only free walkers can be invited to a gathering)
+- [x] Removed the "bridge" ribbon code in `paths/PathRenderer.js` (it made none for the default, medium or large data)
+- [x] Chat bubbles watched in real time for 45 s: at most 3 at once, overlapping in ~1% of frames (brief, as one fades as another starts)
+- [x] Trunks, lamp posts, benches, rocks, bushes (`registerSolid`) and the lake now block walking agents (`agents/collision.js`)
+- [x] Landmark circles are registered as obstacles once agents exist, so sitting/resting/gathering spots (and walks to them) avoid landmarks
+- [x] Walkers go and chat with people sitting on a bench or the grass (`VisitingState`); people resting on the grass are asleep and are left alone
+- [ ] Visits that fail: about a quarter of tries find no free spot in front of the sitter or the sitter gets up first — could try the sides/back or a nearer sitter
 
 ## Housekeeping
 

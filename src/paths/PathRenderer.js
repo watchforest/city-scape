@@ -192,30 +192,11 @@ export function renderPaths(routes, projectNodes, heightAt = () => 0) {
   };
 
   // ── What is painted on the ground ─────────────────────────────────────────
-  // Every path at its normal width: where paths overlap, the painted union merges them with no
-  // stepped widening. The strip of grass between two close, parallel paths is filled by a
-  // "bridge" ribbon running down the middle between them, as wide as the gap between their
-  // centrelines, so the merged band changes width smoothly with the distance.
+  // Every path at its normal width: where paths overlap, the painted union merges them with no stepped widening.
+  // (A "bridge" ribbon between close parallel paths used to fill the strip of grass between them; the thinned
+  // network never produced one — default, medium and large data all gave none — so it was removed.)
   for (const { pts } of allSampled) {
     shapes.ribbons.push(pts.map(({ u, v }) => ({ u, v, width: PATH_WIDTH })));
-  }
-  for (let i = 0; i < allSampled.length; i++) {
-    const a = allSampled[i];
-    for (let j = i + 1; j < allSampled.length; j++) {
-      const b = allSampled[j];
-      let chain = [];
-      const flush = () => { if (chain.length >= 2) shapes.ribbons.push(chain); chain = []; };
-      for (const pt of a.pts) {
-        let best = null, bestD2 = MERGE_DIST * MERGE_DIST;
-        for (const op of b.pts) {
-          const d2 = (pt.u - op.u) ** 2 + (pt.v - op.v) ** 2;
-          if (d2 < bestD2 && Math.abs(pt.tu * op.tu + pt.tv * op.tv) > MERGE_DOT) { bestD2 = d2; best = op; }
-        }
-        if (!best || nearSharedNode(pt, a.edge, b.edge)) { flush(); continue; }
-        chain.push({ u: (pt.u + best.u) / 2, v: (pt.v + best.v) / 2, width: Math.sqrt(bestD2) });
-      }
-      flush();
-    }
   }
 
   for (const { edge, pts } of allSampled) {

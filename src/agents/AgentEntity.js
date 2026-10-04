@@ -38,6 +38,7 @@ import { RestingOnGrassState } from './states/RestingOnGrassState.js';
 import { DancingState } from './states/DancingState.js';
 import { GatherState } from './states/GatherState.js';
 import { MeetingState } from './states/MeetingState.js';
+import { VisitingState } from './states/VisitingState.js';
 import { applyLampLight } from '@/world/lampLight.js';
 
 const SEPARATION_WEIGHT = 2;
@@ -153,6 +154,7 @@ export class AgentEntity extends YUKA.Vehicle {
     this.stateMachine.add('sittingGround', new SittingOnGroundState({ pathSegments }));
     this.stateMachine.add('resting', new RestingOnGrassState({ pathSegments }));
     this.stateMachine.add('dancing', new DancingState());
+    this.stateMachine.add('visiting', new VisitingState());
     this.stateMachine.changeTo('walking');
   }
 

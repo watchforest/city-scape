@@ -14,6 +14,40 @@ export const registry = [];
 
 export function clear() {
   registry.length = 0;
+  _solidGrid.clear();
+}
+
+// ── Solids: what people cannot walk through ───────────────────────────────────
+// Placement circles above are generous (a tree's circle keeps bushes and grass out); these are the real footprints —
+// trunks, lamp posts, benches, rocks, bushes — kept in a coarse hash grid so collision (agents/collision.js) can
+// ask for the few that are near an agent.
+
+const SOLID_CELL = 8;
+const _solidGrid = new Map(); // "cx,cz" → [{ x, z, r }]
+const _cellKey = (cx, cz) => cx * 73856093 ^ cz * 19349663;
+
+export function registerSolid(x, z, r) {
+  const s = { x, z, r };
+  const cx0 = Math.floor((x - r) / SOLID_CELL), cx1 = Math.floor((x + r) / SOLID_CELL);
+  const cz0 = Math.floor((z - r) / SOLID_CELL), cz1 = Math.floor((z + r) / SOLID_CELL);
+  for (let cx = cx0; cx <= cx1; cx++) {
+    for (let cz = cz0; cz <= cz1; cz++) {
+      const k = _cellKey(cx, cz);
+      if (!_solidGrid.has(k)) _solidGrid.set(k, []);
+      _solidGrid.get(k).push(s);
+    }
+  }
+}
+
+/** Calls `fn(solid)` for the solids in the cell holding (x, z) and its neighbours (a superset of those within ~8 units). */
+export function forSolidsNear(x, z, fn) {
+  const cx = Math.floor(x / SOLID_CELL), cz = Math.floor(z / SOLID_CELL);
+  for (let i = -1; i <= 1; i++) {
+    for (let j = -1; j <= 1; j++) {
+      const list = _solidGrid.get(_cellKey(cx + i, cz + j));
+      if (list) for (const s of list) fn(s);
+    }
+  }
 }
 
 export function registerCircle(x, z, r) {
