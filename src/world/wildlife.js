@@ -1,70 +1,69 @@
 /**
- * Wildlife: a flock of birds circling high above the park by day, and a few ducks paddling on the lake.
+ * Wildlife: birds circling high above the park by day, and a few ducks paddling on the lake.
  *
- * Birds are one InstancedMesh (two-triangle "V" wings); the flap runs in the vertex shader from the
- * instance position, so the per-frame JS work is just moving ~a dozen matrices. Ducks are tiny
- * hand-built groups that drift on slow ellipses inside the lake.
+ * Birds are the animated decor models (src/world/decor.js: skinned, one flap clip each), cloned per bird
+ * with SkeletonUtils; there are none if the models didn't load. They fly slow circles, banking into the
+ * turn, and roost (disappear) at dusk. Ducks are tiny hand-built groups that drift on slow ellipses
+ * inside the lake.
  */
 
 import * as THREE from 'three';
+import { clone as cloneSkinned } from 'three/addons/utils/SkeletonUtils.js';
 import { getLake, WATER_Y } from './lake.js';
 import { getParkHalf, getParkAreaScale } from './parkBounds.js';
-import { BIRD_COUNT, DUCK_COUNT } from '@/config.js';
+import { BIRD_COUNT, BIRD_SCALE, DUCK_COUNT } from '@/config.js';
 
 const _birds = [];
-let _birdMesh = null;
-let _birdTime = { value: 0 };
 const _ducks = [];
 
-const _m = new THREE.Matrix4();
 const _q = new THREE.Quaternion();
-const _p = new THREE.Vector3();
-const _s = new THREE.Vector3(1, 1, 1);
+const _roll = new THREE.Quaternion();
 const _up = new THREE.Vector3(0, 1, 0);
+const _fwd = new THREE.Vector3(0, 0, 1);
 
 // ── Birds ─────────────────────────────────────────────────────────────────────
 
-function _birdGeometry() {
-  // Body-length along +z, wings out along ±x; the wing tips (x = ±1) get flapped in the shader.
-  const g = new THREE.BufferGeometry();
-  const v = new Float32Array([
-    -2.6, 0, -0.9,   0, 0, 1.2,   0, 0, -0.9,   // left wing
-     2.6, 0, -0.9,   0, 0, -0.9,  0, 0, 1.2,    // right wing
-  ]);
-  g.setAttribute('position', new THREE.BufferAttribute(v, 3));
-  return g;
-}
-
-export function buildBirds(scene, rand) {
+/**
+ * @param {THREE.Scene} scene
+ * @param {Function} rand
+ * @param {{ scene: THREE.Object3D, animations: THREE.AnimationClip[] }[]} variants  the decor bird models
+ */
+export function buildBirds(scene, rand, variants = []) {
+  if (!variants.length) return;
   const count = Math.round(BIRD_COUNT * Math.max(1, getParkAreaScale()));
-  const mat = new THREE.MeshBasicMaterial({ color: 0xf4f4ef, side: THREE.DoubleSide }); // pale gulls read against both sky and grass
-  mat.onBeforeCompile = (shader) => {
-    shader.uniforms.birdTime = _birdTime;
-    shader.vertexShader = shader.vertexShader
-      .replace('#include <common>', '#include <common>\nuniform float birdTime;')
-      .replace('#include <begin_vertex>', `#include <begin_vertex>
-        // flap: wing tips (|x| large) move up and down, out of phase per bird
-        float phase = instanceMatrix[3].x * 0.37 + instanceMatrix[3].z * 0.21;
-        transformed.y += abs(position.x) * sin(birdTime * 7.0 + phase) * 0.7;`);
-  };
-  _birdMesh = new THREE.InstancedMesh(_birdGeometry(), mat, count);
-  _birdMesh.frustumCulled = false; // matrices change every frame; the bounding sphere would be stale
-  _birdMesh.castShadow = false;
-  scene.add(_birdMesh);
-
   const half = getParkHalf();
+
   for (let i = 0; i < count; i++) {
-    // Small flocks: birds share a circling centre and drift a little apart.
-    const flock = Math.floor(i / 4);
-    const fr = (flock + 1) * 9301 % 1000 / 1000;
+    const v = variants[i % variants.length];
+    const model = cloneSkinned(v.scene);
+    model.traverse(o => { if (o.isMesh) { o.frustumCulled = false; o.castShadow = true; } }); // skinned bounds are stale
+    const group = new THREE.Group();
+    group.add(model);
+    group.scale.setScalar(BIRD_SCALE[0] + rand() * (BIRD_SCALE[1] - BIRD_SCALE[0]));
+    group.visible = false;
+    scene.add(group);
+
+    // Flap loop, each bird at its own phase and a slightly different speed.
+    const mixer = new THREE.AnimationMixer(model);
+    if (v.animations.length) {
+      const action = mixer.clipAction(v.animations[0]);
+      action.time = rand() * v.animations[0].duration;
+      action.timeScale = 0.85 + rand() * 0.35;
+      action.play();
+    }
+
+    // Birds in the same group of three share a circling centre.
+    const flock = Math.floor(i / 3);
     _birds.push({
-      cx: (fr * 2 - 1) * half * 0.5, cz: (((flock * 7 + 3) * 4231 % 1000) / 1000 * 2 - 1) * half * 0.5,
+      group, mixer,
+      cx: (((flock * 5 + 1) * 9301 % 1000) / 1000 * 2 - 1) * half * 0.5,
+      cz: (((flock * 7 + 3) * 4231 % 1000) / 1000 * 2 - 1) * half * 0.5,
       radius: half * (0.25 + 0.2 * rand()),
       height: 55 + rand() * 25,
       speed: (0.07 + rand() * 0.05) * (rand() < 0.5 ? 1 : -1) * (flock % 2 ? 1 : -1),
       angle: rand() * Math.PI * 2,
       bob: rand() * Math.PI * 2,
-      scale: 1.2 + rand() * 0.5,
+      time: 0,
     });
   }
 }
@@ -131,21 +130,23 @@ export function updateWildlife(dt, daylight) {
     d.mesh.rotation.z = Math.sin(d.bob * 0.7) * 0.04;
   }
 
-  if (!_birdMesh) return;
-  _birdMesh.visible = daylight > 0.25; // birds roost at dusk
-  if (!_birdMesh.visible) return;
-  _birdTime.value += dt;
-  for (let i = 0; i < _birds.length; i++) {
-    const b = _birds[i];
+  const day = daylight > 0.25; // birds roost at dusk
+  for (const b of _birds) {
+    b.group.visible = day;
+    if (!day) continue;
+    b.mixer.update(dt);
+    b.time += dt;
     b.angle += b.speed * dt;
-    const x = b.cx + Math.cos(b.angle) * b.radius;
-    const z = b.cz + Math.sin(b.angle) * b.radius;
     const dir = Math.sign(b.speed);
-    const heading = Math.atan2(-Math.sin(b.angle) * dir, Math.cos(b.angle) * dir); // tangent
-    _p.set(x, b.height + Math.sin(_birdTime.value * 0.8 + b.bob) * 1.5, z);
+    const heading = Math.atan2(-Math.sin(b.angle) * dir, Math.cos(b.angle) * dir); // tangent of the circle
+    b.group.position.set(
+      b.cx + Math.cos(b.angle) * b.radius,
+      b.height + Math.sin(b.time * 0.8 + b.bob) * 1.5,
+      b.cz + Math.sin(b.angle) * b.radius,
+    );
+    // The model flies towards +Z; bank into the turn (circling with dir = +1 turns right).
     _q.setFromAxisAngle(_up, heading);
-    _s.setScalar(b.scale);
-    _birdMesh.setMatrixAt(i, _m.compose(_p, _q, _s));
+    _roll.setFromAxisAngle(_fwd, dir * 0.3);
+    b.group.quaternion.copy(_q).multiply(_roll);
   }
-  _birdMesh.instanceMatrix.needsUpdate = true;
 }

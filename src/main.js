@@ -19,6 +19,7 @@ import { createCamera } from './world/camera.js';
 import { buildGround, updateGroundShade } from './world/ground.js';
 import { addContactShade } from './world/groundShade.js';
 import { buildSky } from './world/sky.js';
+import { registerDecor, collectDecor } from './world/decor.js';
 import { buildBirds, buildDucks, updateWildlife } from './world/wildlife.js';
 import { setLake, buildWater, updateWater } from './world/lake.js';
 import { getTerrainHeight } from './world/terrain.js';
@@ -34,6 +35,7 @@ import { CameraController } from './interaction/cameraController.js';
 import { initOverlay, showProjectOverlay, hideProjectOverlay } from './ui/overlay.js';
 import { initSpeechBubble, showPersonBubble, hideBubble, updateBubblePosition } from './ui/speechBubble.js';
 import { initSleepZs, updateSleepZs } from './ui/sleepZs.js';
+import { initLandmarkLabels, toggleLandmarkLabels, updateLandmarkLabels } from './ui/landmarkLabels.js';
 import { initChatBubbles, updateChatBubbles } from './ui/chatBubbles.js';
 
 async function init() {
@@ -69,7 +71,9 @@ async function init() {
     const url = resolveModelUrl(proj.model);
     if (url) assetLibrary.register(`attraction:${proj.id}`, url);
   }
+  const decorManifest = await registerDecor(assetLibrary); // trees, rocks, grass, stumps (see world/decor.js)
   await assetLibrary.preloadAll();
+  const decor = collectDecor(assetLibrary, decorManifest);
 
   // ── Spatial layer — paths, nav graph, attraction instances ───────────────
   const affinityEdges = buildProjectEdges(projects);
@@ -96,6 +100,7 @@ async function init() {
 
   // ── Scene + camera ────────────────────────────────────────────────────────
   const { scene, renderer } = createScene();
+  if (import.meta.env.DEV) window.__renderer = renderer; // dev only: inspect renderer.info from the console
   const { cam, controls }   = createCamera(renderer);
   const camController       = new CameraController(cam, controls);
 
@@ -104,14 +109,14 @@ async function init() {
   const pathTexture = bakePathTexture(pathShapes, getParkHalf());
 
   // ── Environment ───────────────────────────────────────────────────────────
-  const { lampHeadMat, lampHaloMat } = buildEnvironment(scene, projectNodes, navGraph, rand, renderedSegments, plazaRadius, lakePos);
+  const { lampHeadMat, lampHaloMat } = buildEnvironment(scene, projectNodes, navGraph, rand, renderedSegments, plazaRadius, lakePos, decor);
   for (const a of attractions) addContactShade(a.displayU, a.displayV, a.footprintRadius * 1.35, 0.4); // grounds the landmarks
   buildGround(scene, rand, pathTexture); // bakes the contact shading, so register it first
   buildSky(scene);
   buildWater(scene, getTerrainHeight);
-  buildGrass(scene, rand);
+  buildGrass(scene, rand, decor.grass);
   buildClouds(scene, rand);
-  buildBirds(scene, rand);
+  buildBirds(scene, rand, decor.bird);
   buildDucks(scene, rand);
 
   // ── Day/night cycle ───────────────────────────────────────────────────────
@@ -138,6 +143,7 @@ async function init() {
       );
     }
   );
+  if (import.meta.env.DEV) Object.assign(window.__dbg ??= {}, { cam, controls, camController, agentController, scene }); // dev only: poke at the scene from the console
   agentController.setRand(rand);
   agentController.setCamera(cam);
   agentController.setDismissCallback(() => { camController.zoomOut(); activeAgent = null; });
@@ -189,6 +195,7 @@ async function init() {
     }
   );
 
+  initLandmarkLabels(cam, renderer, attractionMeshes); // L toggles project names over the landmarks
   picker.registerAgents(agentController.getMeshes());
   picker.registerProjects(attractionMeshes.map(am => am.group));
 
@@ -196,6 +203,9 @@ async function init() {
   window.addEventListener('keydown', e => {
     if (e.key === 't' || e.key === 'T') {
       dayCycle.cyclePreset();
+    }
+    if (e.key === 'l' || e.key === 'L') {
+      toggleLandmarkLabels();
     }
     if (e.key === 'Escape') {
       hideBubble();
@@ -234,6 +244,7 @@ async function init() {
     updateWildlife(dt, dayCycle.daylight);
     dayCycle.update();
     updateBubblePosition();
+    updateLandmarkLabels();
     if (frameNo++ % SHADOW_UPDATE_EVERY === 0) renderer.shadowMap.needsUpdate = true;
     renderer.render(scene, cam);
   }

@@ -45,7 +45,38 @@ export const CLOUD_SHADOW_SCALE     = 0.008; // noise frequency: lower = bigger 
 export const CLOUD_SHADOW_SPEED     = 6;     // world units/s the shadows drift (matches CLOUD_SPEED in clouds.js)
 export const CREST_SHADE            = { valley: 0.28, ridge: 0.12, radius: 7 }; // terrain: how strongly valleys darken / ridges lighten
 
-export const BIRD_COUNT = 4;  // gulls circling over the reference-size park (scaled with the park); they roost at night
+// Decor models (src/world/decor.js, baked by scripts/splitDecor.mjs). The models are already at their category's
+// size; spawners vary them within these ranges.
+// Trees grow in groves so conifers and broadleaf trees don't stand mixed together: the park is split into
+// grove regions (nearest of several random centres), each one either conifer or broadleaf and using only a
+// few variants of that family. Variant ids are the decor model ids (see public/assets/models/decor/manifest.json).
+export const DECOR_TREE_FAMILIES = {
+  conifer:   ['tree_01', 'tree_02', 'tree_08', 'tree_09'],
+  broadleaf: ['tree_03', 'tree_04', 'tree_05', 'tree_06', 'tree_07', 'tree_10'],
+  dead:      ['tree_11'],
+};
+export const DECOR_GROVES_PER_REF_PARK = 18;   // grove regions for the reference-size park (scaled with park area)
+export const DECOR_CONIFER_GROVE_SHARE = 0.35; // share of groves that are conifer
+export const DECOR_GROVE_VARIANTS      = 3;    // variants a grove uses (at most) from its family
+export const DECOR_STRAY_CHANCE        = 0.04; // a tree ignores its grove: from the other family …
+export const DECOR_DEAD_CHANCE         = 0.015; // … or a dead tree
+// Tree size = grove age × a per-tree roll. The roll runs over DECOR_TREE_SCALE, skewed (rand^bias) so most trees are
+// medium-small and a few are giants; each grove is also younger or older as a whole (DECOR_GROVE_SIZE).
+export const DECOR_TREE_SCALE   = [0.65, 2.1];
+export const DECOR_TREE_SIZE_BIAS = 1.4;             // >1 favours smaller trees, 1 = even spread
+export const DECOR_GROVE_SIZE   = [0.8, 1.2];        // per-grove size factor
+export const DECOR_TREE_SQUASH  = 0.15;              // ± per-tree difference between height and width scale
+// Rock sizes are drawn log-uniformly from these ranges, so there are many small rocks and fewer big ones.
+export const DECOR_ROCK_SCALE_BIG   = [0.7, 2.0];    // boulders (in groups on slopes and loose)
+export const DECOR_ROCK_SCALE_SMALL = [0.5, 2.6];    // small rocks and pebbles
+export const DECOR_TREE_DENSITY = 1.15;              // tree count relative to the procedural trees (larger trees need more room)
+export const DECOR_ROCK_SCATTER = 60;                // loose rocks on flat ground, reference-size park (boulder groups on slopes are separate)
+export const DECOR_STUMP_COUNT  = 28;                // tree stumps, reference-size park
+export const GRASS_CLUMP_SCALE  = [1.2, 2.2];       // grass clump size multiplier range
+export const GRASS_CLUMP_DENSITY = 10;           // clumps relative to the old dome tufts (TUFT_DENSITY in grass.js)
+
+export const BIRD_COUNT = 5;  // birds circling over the reference-size park (scaled with the park); they roost at night
+export const BIRD_SCALE = [4, 5]; // bird model size multiplier (the model has a 0.7 wingspan)
 export const DUCK_COUNT = 5;   // ducks paddling on the lake
 
 export const GROUND_SIDE_COLOR = 0x5c3a1e;  // diorama box sides

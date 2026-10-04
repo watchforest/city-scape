@@ -20,7 +20,11 @@ import { isOnPath } from '@/paths/pathTexture.js';
 import { addContactShade } from './groundShade.js';
 import { InstanceBatch } from '@/utils/InstanceBatch.js';
 import { getTerrainHeight } from './terrain.js';
-import { TERRAIN_MAX_HEIGHT } from '@/config.js';
+import {
+  TERRAIN_MAX_HEIGHT, DECOR_TREE_FAMILIES, DECOR_TREE_SCALE, DECOR_TREE_DENSITY, DECOR_ROCK_SCATTER, DECOR_STUMP_COUNT,
+  DECOR_TREE_SIZE_BIAS, DECOR_GROVE_SIZE, DECOR_TREE_SQUASH, DECOR_ROCK_SCALE_BIG, DECOR_ROCK_SCALE_SMALL,
+  DECOR_GROVES_PER_REF_PARK, DECOR_CONIFER_GROVE_SHARE, DECOR_GROVE_VARIANTS, DECOR_STRAY_CHANCE, DECOR_DEAD_CHANCE,
+} from '@/config.js';
 
 const TREE_DENSITY   = 180;  // trees for the reference-size park; scaled by park area
 
@@ -31,6 +35,13 @@ const BENCH_SCALE       = 1.4;  // benches are scaled up so a seated character f
 const BENCH_SIDE_CLEAR  = 1.5;  // metres from the path edge to the bench centre (added to half-width); the seat's front edge sits ~0.8 from the path
 const BENCH_PLAZA_GAP   = 2.5;  // distance from a plaza disc's edge to its benches
 const BENCH_FOOTPRINT   = 2.4;  // obstacle radius registered per bench (half its scaled length ≈ 2.45)
+// The decor-model bench is 6.1 long (half = 3.05, baked by splitDecor.mjs), so it needs a bigger footprint.
+// (benchRegistry's BENCH_APPROACH_SLACK must stay above this.)
+const DECOR_BENCH_FOOTPRINT    = 3.2;
+const DECOR_BENCH_SEAT_TOP     = 1.0; // seat height of the baked bench (0.63 × the 1.59 bake scale)
+const DECOR_BENCH_STAND_OFF    = 1.7; // agents stop this far in front of its centre (seat front edge at ≈ 1.0), then sit back onto it
+const DECOR_BENCH_SHADE_RADIUS = 4;   // contact shadow around it
+const DECOR_BENCH_BIN_OFFSET   = 3.9; // a bin stands this far from the bench centre, just past its end
 const BENCH_PATH_GAP    = 1.0;  // a bench's centre must be at least this far outside any path surface
 const BENCH_PAINT_GAP   = 0.5;  // … and this far from anything painted as path/plaza on the ground (isOnPath)
 const LAMP_SIDE_CLEAR   = 3.0;
@@ -281,6 +292,61 @@ function addLayeredPine(batches, x, z, ry, rand) {
 
 // ── Bench instance helper ─────────────────────────────────────────────────────
 
+// ── Decor-model instances (src/world/decor.js) ────────────────────────────────
+
+/**
+ * Split the loaded tree variants into groves (see DECOR_TREE_FAMILIES). Returns a function that,
+ * given a position, says what to plant there: a variant from the grove's own palette (with the odd
+ * stray) and the grove's size factor.
+ */
+function _makeGroves(variants, rand) {
+  const byFamily = {};
+  for (const [family, ids] of Object.entries(DECOR_TREE_FAMILIES)) byFamily[family] = variants.filter(v => ids.includes(v.id));
+  const living = ['conifer', 'broadleaf'].filter(f => byFamily[f].length);
+  // Unlisted variants (e.g. models added later) count as broadleaf rather than being dropped.
+  const listed = new Set(Object.values(DECOR_TREE_FAMILIES).flat());
+  byFamily.broadleaf.push(...variants.filter(v => !listed.has(v.id)));
+  if (!living.length) return () => ({ variant: variants[Math.floor(rand() * variants.length)], age: 1 });
+
+  const half = getParkHalf();
+  const groves = Array.from({ length: Math.max(3, Math.round(DECOR_GROVES_PER_REF_PARK * getParkAreaScale())) }, () => {
+    const family = living.length === 1 ? living[0] : (rand() < DECOR_CONIFER_GROVE_SHARE ? 'conifer' : 'broadleaf');
+    const palette = [...byFamily[family]].sort(() => rand() - 0.5).slice(0, DECOR_GROVE_VARIANTS);
+    const age = DECOR_GROVE_SIZE[0] + rand() * (DECOR_GROVE_SIZE[1] - DECOR_GROVE_SIZE[0]);
+    return { x: (rand() * 2 - 1) * half, z: (rand() * 2 - 1) * half, family, palette, age };
+  });
+
+  // Returns { variant, age } for a position: age is the size factor of the grove it falls in.
+  return (x, z) => {
+    let g = groves[0], best = Infinity;
+    for (const c of groves) {
+      const d = (c.x - x) ** 2 + (c.z - z) ** 2;
+      if (d < best) { best = d; g = c; }
+    }
+    if (byFamily.dead.length && rand() < DECOR_DEAD_CHANCE) return { variant: byFamily.dead[0], age: g.age };
+    if (living.length > 1 && rand() < DECOR_STRAY_CHANCE) {
+      const other = byFamily[g.family === 'conifer' ? 'broadleaf' : 'conifer'];
+      return { variant: other[Math.floor(rand() * other.length)], age: g.age };
+    }
+    return { variant: g.palette[Math.floor(rand() * g.palette.length)], age: g.age };
+  };
+}
+
+/** A decor tree: the given variant at a random size (grove age × skewed roll), spin and with a small tint. */
+function addDecorTree(batches, { variant: v, age }, x, z, rand) {
+  const roll = DECOR_TREE_SCALE[0] + Math.pow(rand(), DECOR_TREE_SIZE_BIAS) * (DECOR_TREE_SCALE[1] - DECOR_TREE_SCALE[0]);
+  const s = roll * age;
+  const squash = 1 + (rand() * 2 - 1) * DECOR_TREE_SQUASH; // taller-thinner or shorter-wider
+  const crownR = Math.max(v.size[0], v.size[2]) / 2 * s;
+  const l = 0.85 + rand() * 0.3, warm = rand() * 0.25;
+  addContactShade(x, z, crownR * 1.5, 0.5);
+  registerCircle(x, z, 1.2 * s); // trunk: keeps bushes, rocks and grass out of it
+  batches.get(v.id).add(
+    _compose(x, getTerrainHeight(x, z) - 0.15 * s, z, rand() * Math.PI * 2, s / Math.sqrt(squash), s * squash, s / Math.sqrt(squash)),
+    new THREE.Color(l * (1 + warm * 0.4), l * (1 + warm * 0.1), l * (1 - warm * 0.3)),
+  );
+}
+
 let _benchCount = 0;
 
 /**
@@ -298,6 +364,18 @@ function addBench(batches, x, z, facingAngle) {
     benchRootQ,
     new THREE.Vector3(BENCH_SCALE, BENCH_SCALE, BENCH_SCALE) // scales the parts' offsets and sizes too
   );
+
+  // Decor-model bench: already at its final size, one instance per part (seat, back, legs).
+  if (batches.model) {
+    const placed = new THREE.Matrix4().compose(new THREE.Vector3(x, gy, z), benchRootQ, new THREE.Vector3(1, 1, 1));
+    for (const b of batches.model) b.add(placed);
+    addContactShade(x, z, DECOR_BENCH_SHADE_RADIUS, 0.3);
+    if (_benchCount++ % 2 === 0) {
+      const binAt = new THREE.Matrix4().multiplyMatrices(benchRoot, new THREE.Matrix4().makeTranslation(DECOR_BENCH_BIN_OFFSET / BENCH_SCALE, 0.5, 0.15));
+      batches.bin.add(binAt);
+    }
+    return;
+  }
 
   // Each part: local position → transform by benchRoot
   const _localPart = (lx, ly, lz) => {
@@ -325,8 +403,12 @@ function addBench(batches, x, z, facingAngle) {
  */
 function addLamppost(batches, x, z) {
   const gy = getTerrainHeight(x, z);
-  batches.pole.add(_compose(x, gy + 4,   z, 0, 1, 1, 1));
-  batches.head.add(_compose(x, gy + 8.5, z, 0, 1, 1, 1));
+  if (batches.model) {
+    for (const b of batches.model) b.add(_compose(x, gy, z, 0, 1, 1, 1)); // pole and lantern glass, already at final size
+  } else {
+    batches.pole.add(_compose(x, gy + 4,   z, 0, 1, 1, 1));
+    batches.head.add(_compose(x, gy + 8.5, z, 0, 1, 1, 1));
+  }
   _pos.set(x, gy + 0.15, z);
   _rot.set(-Math.PI / 2, 0, 0);
   _scl.set(1, 1, 1);
@@ -510,7 +592,7 @@ function buildLake(scene, lakePos, rand) {
 
 // ── Main export ───────────────────────────────────────────────────────────────
 
-export function buildEnvironment(scene, projectNodes, pathGraph, rand, pathSegments, plazaRadius, lakePos) {
+export function buildEnvironment(scene, projectNodes, pathGraph, rand, pathSegments, plazaRadius, lakePos, decor = null) {
   const segs = pathSegments ?? [];
   // Instancing caps grow with the park (never below the reference-size caps).
   const cap = n => Math.ceil(n * Math.max(1, getParkAreaScale()));
@@ -543,19 +625,35 @@ export function buildEnvironment(scene, projectNodes, pathGraph, rand, pathSegme
   const flowerBatch = new InstanceBatch(GEO_FLOWER, MAT_FLOWER, cap(MAX_FLOWERS));
   flowerBatch.getMesh().castShadow = false; // too small to matter, and a lot of shadow-pass work
 
-  // Benches — 4 parts
+  // Benches: the decor model (one batch per part: seat, back, legs) or the four procedural parts, plus bins.
+  const benchModel = decor?.bench?.[0] ?? null;
+  const benchFootprint = benchModel ? DECOR_BENCH_FOOTPRINT : BENCH_FOOTPRINT;
+  const benchSeat = benchModel ? [DECOR_BENCH_SEAT_TOP, DECOR_BENCH_STAND_OFF] : []; // → registerBench(seatTop, standOff)
   const benchBatches = {
-    seat:     new InstanceBatch(GEO_BENCH_SEAT, MAT_PLANK, cap(MAX_BENCHES)),
-    back:     new InstanceBatch(GEO_BENCH_BACK, MAT_PLANK, cap(MAX_BENCHES)),
-    leftLeg:  new InstanceBatch(GEO_BENCH_LEG,  MAT_LEG,   cap(MAX_BENCHES)),
-    rightLeg: new InstanceBatch(GEO_BENCH_LEG,  MAT_LEG,   cap(MAX_BENCHES)),
-    bin:      new InstanceBatch(GEO_BIN,        MAT_BIN,   cap(MAX_BENCHES)),
+    ...(benchModel
+      ? { model: benchModel.parts.map(p => new InstanceBatch(p.geometry, p.material, cap(MAX_BENCHES))) }
+      : {
+        seat:     new InstanceBatch(GEO_BENCH_SEAT, MAT_PLANK, cap(MAX_BENCHES)),
+        back:     new InstanceBatch(GEO_BENCH_BACK, MAT_PLANK, cap(MAX_BENCHES)),
+        leftLeg:  new InstanceBatch(GEO_BENCH_LEG,  MAT_LEG,   cap(MAX_BENCHES)),
+        rightLeg: new InstanceBatch(GEO_BENCH_LEG,  MAT_LEG,   cap(MAX_BENCHES)),
+      }),
+    bin: new InstanceBatch(GEO_BIN, MAT_BIN, cap(MAX_BENCHES)),
   };
 
-  // Lampposts — pole + head + ground halo (no PointLights)
+  // Lampposts: the decor model (pole + lantern; the glass takes the emissive lamp material that DayCycle
+  // drives) or the procedural pole + head, plus the ground halo. No PointLights.
+  const lampModel = decor?.lamp?.[0] ?? null;
   const lampBatches = {
-    pole: new InstanceBatch(GEO_LAMP_POLE, MAT_POLE,      cap(MAX_LAMPS)),
-    head: new InstanceBatch(GEO_LAMP_HEAD, MAT_LAMP_HEAD, cap(MAX_LAMPS)),
+    ...(lampModel
+      ? {
+        model: lampModel.parts.map(p => new InstanceBatch(
+          p.geometry, /vidro|glass/i.test(p.materialName) ? MAT_LAMP_HEAD : p.material, cap(MAX_LAMPS))),
+      }
+      : {
+        pole: new InstanceBatch(GEO_LAMP_POLE, MAT_POLE,      cap(MAX_LAMPS)),
+        head: new InstanceBatch(GEO_LAMP_HEAD, MAT_LAMP_HEAD, cap(MAX_LAMPS)),
+      }),
     halo: new InstanceBatch(GEO_LAMP_HALO, MAT_LAMP_HALO, cap(MAX_LAMPS)),
   };
 
@@ -564,10 +662,10 @@ export function buildEnvironment(scene, projectNodes, pathGraph, rand, pathSegme
   for (const { x, z, facingAngle } of benchPoints) {
     // Check against the real path widths, not the 2-unit-cell path grid: that grid reaches ~2
     // units past the path edge, which would push benches away from it.
-    if (isOccupied(x, z, 2, true) || !_clearOfPaths(x, z, segs, BENCH_PATH_GAP) || isOnPath(x, z, BENCH_PAINT_GAP)) continue;
+    if (isOccupied(x, z, benchFootprint - 0.4, true) || !_clearOfPaths(x, z, segs, BENCH_PATH_GAP) || isOnPath(x, z, BENCH_PAINT_GAP)) continue;
     addBench(benchBatches, x, z, facingAngle);
-    registerCircle(x, z, BENCH_FOOTPRINT);
-    registerBench(x, z, facingAngle);
+    registerCircle(x, z, benchFootprint);
+    registerBench(x, z, facingAngle, ...benchSeat);
   }
 
   // ── Lampposts (left side of path) ───────────────────────────────────────
@@ -601,20 +699,25 @@ export function buildEnvironment(scene, projectNodes, pathGraph, rand, pathSegme
         const angle = (i / benchCount) * Math.PI * 2 + Math.PI / benchCount; // offset from lamps
         const x = cx + Math.cos(angle) * edgeR;
         const z = cz + Math.sin(angle) * edgeR;
-        if (isOccupied(x, z, 2, true) || !_clearOfPaths(x, z, segs, BENCH_PATH_GAP) || isOnPath(x, z, BENCH_PAINT_GAP)) continue;
+        if (isOccupied(x, z, benchFootprint - 0.4, true) || !_clearOfPaths(x, z, segs, BENCH_PATH_GAP) || isOnPath(x, z, BENCH_PAINT_GAP)) continue;
         const facingAngle = Math.atan2(cx - x, cz - z); // face toward plaza centre
         addBench(benchBatches, x, z, facingAngle);
-        registerCircle(x, z, BENCH_FOOTPRINT);
-        registerBench(x, z, facingAngle);
+        registerCircle(x, z, benchFootprint);
+        registerBench(x, z, facingAngle, ...benchSeat);
       }
     }
   }
 
   // ── Trees (random, avoiding all registry obstacles) ──────────────────────
-  const treeCount = Math.round(TREE_DENSITY * getParkAreaScale());
+  // Decor-model trees when they loaded; otherwise the procedural cone / round / pine / birch trees.
+  const decorTrees = decor?.tree ?? [];
+  const treeCount = Math.round(TREE_DENSITY * (decorTrees.length ? DECOR_TREE_DENSITY : 1) * getParkAreaScale());
+  const pickTree = decorTrees.length ? _makeGroves(decorTrees, rand) : null;
+  const decorTreeBatches = new Map(decorTrees.map(v => [v.id, new InstanceBatch(v.geometry, v.material, treeCount)]));
   for (let i = 0; i < treeCount; i++) {
-    const pos = _randomClear(rand, 4);
+    const pos = _randomClear(rand, decorTrees.length ? 6 : 4);
     if (!pos) continue;
+    if (decorTrees.length) { addDecorTree(decorTreeBatches, pickTree(pos.x, pos.z), pos.x, pos.z, rand); continue; }
     const ry   = rand() * Math.PI * 2;
     const pick = rand();
     if (pick < 0.25)      addConeTree(coneBatches,   pos.x, pos.z, ry, rand);
@@ -635,18 +738,22 @@ export function buildEnvironment(scene, projectNodes, pathGraph, rand, pathSegme
     if (pos) addFlowerPatch(flowerBatch, pos.x, pos.z, rand);
   }
 
-  // ── Rock outcroppings on steep slopes ───────────────────────────────────
-  _buildRocks(scene, rand);
+  // ── Rocks (boulder groups on steep slopes, loose rocks on flat ground) and stumps ─────
+  _buildRocks(scene, rand, decor?.rock ?? []);
+  const stumpBatches = _buildStumps(scene, rand, decor?.stump ?? []);
 
   // ── Finalize all InstanceBatches (set count + add to scene) ─────────────
   for (const b of Object.values(coneBatches))  b.finalize(scene);
   for (const b of Object.values(roundBatches)) b.finalize(scene);
   for (const b of Object.values(pineBatches))  b.finalize(scene);
   for (const b of Object.values(birchBatches)) b.finalize(scene);
+  for (const b of decorTreeBatches.values())   b.finalize(scene);
+  // (rock batches finalise themselves inside _buildRocks)
+  for (const b of stumpBatches)                b.finalize(scene);
   bushBatch.finalize(scene);
   flowerBatch.finalize(scene);
-  for (const b of Object.values(benchBatches)) b.finalize(scene);
-  for (const b of Object.values(lampBatches))  b.finalize(scene);
+  for (const b of Object.values(benchBatches).flat()) b.finalize(scene);
+  for (const b of Object.values(lampBatches).flat())  b.finalize(scene);
 
   // Return lamp materials so dayCycle can drive emissive + halo opacity
   return { lampHeadMat: MAT_LAMP_HEAD, lampHaloMat: MAT_LAMP_HALO };
@@ -655,8 +762,89 @@ export function buildEnvironment(scene, projectNodes, pathGraph, rand, pathSegme
 // ── Rock outcroppings ─────────────────────────────────────────────────────────
 
 const ROCK_COLORS = [0x7a7060, 0x6a6258, 0x857a6e, 0x908880];
+const BIG_ROCK_WIDTH = 2.2; // decor rocks at least this wide count as boulders; the rest are small rocks and pebbles
 
-function _buildRocks(scene, rand) {
+/**
+ * Boulder groups on steep slopes plus loose rocks scattered over flat ground, from the decor rock
+ * models (one InstancedMesh per variant). Falls back to the procedural boulders if none loaded.
+ */
+function _buildRocks(scene, rand, variants) {
+  if (!variants.length) { _buildProceduralRocks(scene, rand); return; }
+
+  const big   = variants.filter(v => Math.max(v.size[0], v.size[2]) >= BIG_ROCK_WIDTH);
+  const small = variants.filter(v => !big.includes(v));
+  const batches = new Map(variants.map(v => [v.id, new InstanceBatch(v.geometry, v.material, 1200)]));
+
+  const logUniform = ([lo, hi]) => lo * Math.pow(hi / lo, rand()); // many small, fewer big
+  const place = (v, x, z, scale) => {
+    const r = Math.max(v.size[0], v.size[2]) / 2 * scale;
+    const l = 0.85 + rand() * 0.3;
+    addContactShade(x, z, r * 1.6, 0.4);
+    // Sunk a little into the ground so a rock on a slope doesn't hover on its downhill side; each rock
+    // is also stretched a little differently in width, depth and height.
+    batches.get(v.id).add(
+      _compose(x, getTerrainHeight(x, z) - v.size[1] * scale * 0.12, z, rand() * Math.PI * 2,
+        scale * (0.85 + rand() * 0.35), scale * (0.8 + rand() * 0.4), scale * (0.85 + rand() * 0.35)),
+      new THREE.Color(l, l, l * 0.97),
+    );
+  };
+
+  // Boulder groups on steep slopes: one or two big rocks with a few small ones around them.
+  const PROBE = 4;
+  const COUNT = Math.round(120 * getParkAreaScale());
+  const HALF  = getParkHalf() - 6;
+  let groups = 0;
+  for (let attempt = 0; attempt < COUNT * 6 && groups < COUNT; attempt++) {
+    const x = (rand() * 2 - 1) * HALF, z = (rand() * 2 - 1) * HALF;
+    const h  = getTerrainHeight(x, z);
+    const slope = Math.max(Math.abs(h - getTerrainHeight(x + PROBE, z)), Math.abs(h - getTerrainHeight(x, z + PROBE))) / PROBE;
+    if (slope < 0.35 || h < TERRAIN_MAX_HEIGHT * 0.2 || isOccupied(x, z, 5)) continue;
+
+    const bigCount = 1 + Math.floor(rand() * 2);
+    for (let b = 0; b < bigCount && big.length; b++) {
+      place(big[Math.floor(rand() * big.length)], x + (rand() - 0.5) * 6, z + (rand() - 0.5) * 6, logUniform(DECOR_ROCK_SCALE_BIG));
+    }
+    const smallCount = 1 + Math.floor(rand() * 3);
+    for (let b = 0; b < smallCount && small.length; b++) {
+      place(small[Math.floor(rand() * small.length)], x + (rand() - 0.5) * 10, z + (rand() - 0.5) * 10, logUniform(DECOR_ROCK_SCALE_SMALL));
+    }
+    registerCircle(x, z, 4);
+    groups++;
+  }
+
+  // Loose rocks on flat ground, mostly small, now and then a boulder.
+  const scatter = Math.round(DECOR_ROCK_SCATTER * getParkAreaScale());
+  for (let i = 0; i < scatter; i++) {
+    const pos = _randomClear(rand, 3);
+    if (!pos) continue;
+    const useBig = big.length && rand() < 0.15;
+    const pool = useBig || !small.length ? big : small;
+    const v = pool[Math.floor(rand() * pool.length)];
+    place(v, pos.x, pos.z, logUniform(useBig ? DECOR_ROCK_SCALE_BIG : DECOR_ROCK_SCALE_SMALL));
+    registerCircle(pos.x, pos.z, 1.5);
+  }
+
+  for (const b of batches.values()) b.finalize(scene);
+}
+
+/** Tree stumps dotted around the park, from the decor stump models. Returns the batches to finalise. */
+function _buildStumps(scene, rand, variants) {
+  if (!variants.length) return [];
+  const count = Math.round(DECOR_STUMP_COUNT * getParkAreaScale());
+  const batches = new Map(variants.map(v => [v.id, new InstanceBatch(v.geometry, v.material, count)]));
+  for (let i = 0; i < count; i++) {
+    const pos = _randomClear(rand, 3);
+    if (!pos) continue;
+    const v = variants[Math.floor(rand() * variants.length)];
+    const s = 1.3 + rand() * 1.2;
+    addContactShade(pos.x, pos.z, v.size[0] * s, 0.4);
+    batches.get(v.id).add(_compose(pos.x, getTerrainHeight(pos.x, pos.z) - 0.05, pos.z, rand() * Math.PI * 2, s, s, s));
+    registerCircle(pos.x, pos.z, 1.5);
+  }
+  return [...batches.values()];
+}
+
+function _buildProceduralRocks(scene, rand) {
   const PROBE  = 4;    // slope detection step in world units
   const COUNT  = Math.round(120 * getParkAreaScale());  // candidate positions to try
   const HALF   = getParkHalf() - 6;

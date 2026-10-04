@@ -9,8 +9,11 @@ import { claimNearestSeat, releaseSeat } from '@/world/benchRegistry.js';
 import { REST_MIN, REST_MAX } from '@/config.js';
 
 // Visual-only placement of the seated figure relative to the bench.
-const SIT_UP      = 0.8;
-const SIT_FORWARD = 0.2;
+// Stand-To-Sit ends in a floor-sitting pose: the lowest part of the body (the bottom) is ≈ 0.2 below the character's
+// origin, with the legs stretched out forward. Lifting the mesh by seatTop + SEAT_CONTACT puts that point on the seat
+// top (a hair sunk in, so there is no gap). Measured with the skinned vertices of the seated pose.
+const SEAT_CONTACT = 0.17;
+const SIT_FORWARD  = 0.2;
 
 export class SittingOnBenchState extends SeekSpotState {
   stateId = 'sitting';
@@ -26,7 +29,8 @@ export class SittingOnBenchState extends SeekSpotState {
 
   onArrive(agent) {
     // The mesh is lifted onto the seat in step with the sit-down animation.
-    agent.sitDown({ up: SIT_UP, forward: SIT_FORWARD });
+    // Standing `standOff` in front of the seat: the sit-down moves the mesh back onto it as well as up.
+    agent.sitDown({ up: this._spot.seatTop + SEAT_CONTACT, forward: SIT_FORWARD - this._spot.standOff });
   }
 
   onSettled(agent) { agent.settleSeated(); }
