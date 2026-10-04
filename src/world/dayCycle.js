@@ -13,6 +13,7 @@ import * as THREE from 'three';
 import { getParkHalf, getParkScale } from './parkBounds.js';
 import { setWaterLight } from './lake.js';
 import { setSkyColors } from './sky.js';
+import { setCloudLight } from './clouds.js';
 import { SKY_DAY, SKY_DAWN, SKY_NIGHT } from '@/config.js';
 
 const _skyDay   = new THREE.Color(SKY_DAY);
@@ -24,6 +25,11 @@ const _skyBuf = new THREE.Color();
 const _lightDir = new THREE.Vector3();
 const _lightCol = new THREE.Color();
 const _white = new THREE.Color(1, 1, 1);
+const _cloudLit = new THREE.Color();
+const _cloudShade = new THREE.Color();
+const _cloudNightLit = new THREE.Color(0.3, 0.34, 0.5);
+const _cloudDayShade = new THREE.Color(0.6, 0.67, 0.8);
+const _cloudNightShade = new THREE.Color(0.1, 0.12, 0.2);
 const _horizonBuf = new THREE.Color();
 const _zenithBuf = new THREE.Color();
 
@@ -178,6 +184,11 @@ export class DayCycle {
     // ── Moon ──────────────────────────────────────────────────────────────
     this._moon.visible   = !sunVisible || hours < 7 || hours > 18;
     this._moon.intensity = Math.max(0, 0.15 - sunAbove * 0.12);
+
+    // ── Clouds: sunny tops take the sun's colour, undersides a grey-blue touched by the sky ─────
+    _cloudLit.copy(this._sun.color).lerp(_cloudNightLit, 1 - this.daylight);
+    _cloudShade.copy(_cloudDayShade).lerp(_cloudNightShade, 1 - this.daylight).lerp(this._scene.background, 0.22);
+    setCloudLight(_cloudLit, _cloudShade);
 
     // ── Water: lit by whichever of sun/moon is up ─────────────────────────
     const lightSrc = sunVisible ? this._sun : this._moon;
