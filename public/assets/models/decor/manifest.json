@@ -1,0 +1,420 @@
+{
+  "generatedAt": "2026-10-04T19:27:16.941Z",
+  "models": [
+    {
+      "id": "bird_01",
+      "category": "bird",
+      "file": "bird/bird_01.glb",
+      "tris": 156,
+      "parts": 1,
+      "skinned": true,
+      "animations": [
+        "Scene"
+      ]
+    },
+    {
+      "id": "bird_02",
+      "category": "bird",
+      "file": "bird/bird_02.glb",
+      "tris": 156,
+      "parts": 1,
+      "skinned": true,
+      "animations": [
+        "Scene"
+      ]
+    },
+    {
+      "id": "bird_03",
+      "category": "bird",
+      "file": "bird/bird_03.glb",
+      "tris": 156,
+      "parts": 1,
+      "skinned": true,
+      "animations": [
+        "Scene"
+      ]
+    },
+    {
+      "id": "bird_04",
+      "category": "bird",
+      "file": "bird/bird_04.glb",
+      "tris": 156,
+      "parts": 1,
+      "skinned": true,
+      "animations": [
+        "Scene"
+      ]
+    },
+    {
+      "id": "bird_05",
+      "category": "bird",
+      "file": "bird/bird_05.glb",
+      "tris": 156,
+      "parts": 1,
+      "skinned": true,
+      "animations": [
+        "Scene"
+      ]
+    },
+    {
+      "id": "rock_01",
+      "category": "rock",
+      "file": "rock/rock_01.glb",
+      "tris": 120,
+      "parts": 1,
+      "size": [
+        1.17,
+        0.84,
+        1.34
+      ]
+    },
+    {
+      "id": "rock_02",
+      "category": "rock",
+      "file": "rock/rock_02.glb",
+      "tris": 120,
+      "parts": 1,
+      "size": [
+        1.6,
+        1.45,
+        1.72
+      ]
+    },
+    {
+      "id": "rock_03",
+      "category": "rock",
+      "file": "rock/rock_03.glb",
+      "tris": 120,
+      "parts": 1,
+      "size": [
+        5.67,
+        2.25,
+        4.17
+      ]
+    },
+    {
+      "id": "rock_04",
+      "category": "rock",
+      "file": "rock/rock_04.glb",
+      "tris": 120,
+      "parts": 1,
+      "size": [
+        4.94,
+        4.33,
+        4.12
+      ]
+    },
+    {
+      "id": "rock_05",
+      "category": "rock",
+      "file": "rock/rock_05.glb",
+      "tris": 120,
+      "parts": 1,
+      "size": [
+        2.33,
+        2.97,
+        2.35
+      ]
+    },
+    {
+      "id": "rock_06",
+      "category": "rock",
+      "file": "rock/rock_06.glb",
+      "tris": 56,
+      "parts": 1,
+      "size": [
+        0.74,
+        0.63,
+        0.94
+      ]
+    },
+    {
+      "id": "rock_07",
+      "category": "rock",
+      "file": "rock/rock_07.glb",
+      "tris": 54,
+      "parts": 1,
+      "size": [
+        1.49,
+        1.06,
+        1.5
+      ]
+    },
+    {
+      "id": "rock_08",
+      "category": "rock",
+      "file": "rock/rock_08.glb",
+      "tris": 54,
+      "parts": 1,
+      "size": [
+        1.46,
+        2.54,
+        0.94
+      ]
+    },
+    {
+      "id": "rock_09",
+      "category": "rock",
+      "file": "rock/rock_09.glb",
+      "tris": 68,
+      "parts": 1,
+      "size": [
+        2.29,
+        4.15,
+        1.93
+      ]
+    },
+    {
+      "id": "rock_10",
+      "category": "rock",
+      "file": "rock/rock_10.glb",
+      "tris": 36,
+      "parts": 1,
+      "size": [
+        0.45,
+        0.81,
+        0.47
+      ]
+    },
+    {
+      "id": "rock_11",
+      "category": "rock",
+      "file": "rock/rock_11.glb",
+      "tris": 36,
+      "parts": 1,
+      "size": [
+        0.91,
+        1.86,
+        0.77
+      ]
+    },
+    {
+      "id": "grass_018",
+      "category": "grass",
+      "file": "grass/grass_018.glb",
+      "tris": 20,
+      "parts": 1,
+      "size": [
+        1.34,
+        1.3,
+        0.66
+      ]
+    },
+    {
+      "id": "grass_015",
+      "category": "grass",
+      "file": "grass/grass_015.glb",
+      "tris": 30,
+      "parts": 1,
+      "size": [
+        0.73,
+        1.3,
+        0.96
+      ]
+    },
+    {
+      "id": "grass_012",
+      "category": "grass",
+      "file": "grass/grass_012.glb",
+      "tris": 40,
+      "parts": 1,
+      "size": [
+        0.95,
+        1.3,
+        1.11
+      ]
+    },
+    {
+      "id": "grass_005",
+      "category": "grass",
+      "file": "grass/grass_005.glb",
+      "tris": 40,
+      "parts": 1,
+      "size": [
+        1.03,
+        1.3,
+        0.95
+      ]
+    },
+    {
+      "id": "tree_01",
+      "category": "tree",
+      "file": "tree/tree_01.glb",
+      "tris": 700,
+      "parts": 1,
+      "size": [
+        5.69,
+        11,
+        5.93
+      ]
+    },
+    {
+      "id": "tree_02",
+      "category": "tree",
+      "file": "tree/tree_02.glb",
+      "tris": 913,
+      "parts": 1,
+      "size": [
+        3.77,
+        11,
+        3.72
+      ]
+    },
+    {
+      "id": "tree_03",
+      "category": "tree",
+      "file": "tree/tree_03.glb",
+      "tris": 672,
+      "parts": 1,
+      "size": [
+        5.52,
+        11,
+        8.11
+      ]
+    },
+    {
+      "id": "tree_04",
+      "category": "tree",
+      "file": "tree/tree_04.glb",
+      "tris": 700,
+      "parts": 1,
+      "size": [
+        6.76,
+        11,
+        5.64
+      ]
+    },
+    {
+      "id": "tree_05",
+      "category": "tree",
+      "file": "tree/tree_05.glb",
+      "tris": 700,
+      "parts": 1,
+      "size": [
+        4.33,
+        11,
+        4.66
+      ]
+    },
+    {
+      "id": "tree_06",
+      "category": "tree",
+      "file": "tree/tree_06.glb",
+      "tris": 700,
+      "parts": 1,
+      "size": [
+        7.37,
+        11,
+        6.75
+      ]
+    },
+    {
+      "id": "tree_07",
+      "category": "tree",
+      "file": "tree/tree_07.glb",
+      "tris": 604,
+      "parts": 1,
+      "size": [
+        3.64,
+        11,
+        3.37
+      ]
+    },
+    {
+      "id": "tree_10",
+      "category": "tree",
+      "file": "tree/tree_10.glb",
+      "tris": 808,
+      "parts": 1,
+      "size": [
+        6.44,
+        11,
+        5.74
+      ]
+    },
+    {
+      "id": "tree_11",
+      "category": "tree",
+      "file": "tree/tree_11.glb",
+      "tris": 682,
+      "parts": 1,
+      "size": [
+        5.79,
+        11,
+        5.72
+      ]
+    },
+    {
+      "id": "stump_12",
+      "category": "stump",
+      "file": "stump/stump_12.glb",
+      "tris": 107,
+      "parts": 1,
+      "size": [
+        1.64,
+        1.3,
+        1.36
+      ]
+    },
+    {
+      "id": "tree_08",
+      "category": "tree",
+      "file": "tree/tree_08.glb",
+      "tris": 700,
+      "parts": 1,
+      "size": [
+        4.79,
+        11,
+        4.65
+      ]
+    },
+    {
+      "id": "tree_09",
+      "category": "tree",
+      "file": "tree/tree_09.glb",
+      "tris": 700,
+      "parts": 1,
+      "size": [
+        6.4,
+        11,
+        6.46
+      ]
+    },
+    {
+      "id": "rock_t01",
+      "category": "rock",
+      "file": "rock/rock_t01.glb",
+      "tris": 241,
+      "parts": 1,
+      "size": [
+        6.38,
+        4.13,
+        4.2
+      ]
+    },
+    {
+      "id": "lamp_01",
+      "category": "lamp",
+      "file": "lamp/lamp_01.glb",
+      "tris": 608,
+      "parts": 2,
+      "size": [
+        1.46,
+        8.6,
+        1.3
+      ]
+    },
+    {
+      "id": "bench_01",
+      "category": "bench",
+      "file": "bench/bench_01.glb",
+      "tris": 1016,
+      "parts": 3,
+      "size": [
+        6.1,
+        2.51,
+        2.09
+      ]
+    }
+  ]
+}

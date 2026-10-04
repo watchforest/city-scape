@@ -6,6 +6,8 @@ screenshot_archive/
 # Full-size source models (uncompressed/unsimplified originals). Local only — the
 # optimised versions in public/assets/models are what gets committed and served.
 assets-src/
+# Raw decor packs (trees, rocks, grass); `npm run bake-decor` turns them into the optimised models in public/
+/decor_models/
 
 # macOS
 .DS_Store
