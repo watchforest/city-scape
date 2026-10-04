@@ -6,35 +6,31 @@
  * lighter on top and darker underneath. The colours come from DayCycle (setCloudLight): warm at dusk, grey-blue
  * at night.
  *
- * Clouds have a life: each one appears at a random place with a random size, shape, height and speed,
- * fades in, drifts along +X, fades out, waits a random while and then appears somewhere else, as a different
- * cloud. They also fade out towards the far edge of the sky, so none ever pops in or out.
+ * A cloud crosses the diorama once: it appears just beyond the left end, fades in as it reaches the edge of the
+ * map, drifts along +X, and fades out across the right edge until it is gone just beyond it. Then it waits a random
+ * while and enters again from the left as a different cloud (new size, breadth, height, speed and lane). The fades
+ * depend only on where the cloud is, never on a timer.
  */
 
 import * as THREE from 'three';
 import { CLOUD_COLOR } from '@/config.js';
 import { getParkHalf } from './parkBounds.js';
 
-const CLOUD_COUNT   = 7;
-const SLOTS         = 22;          // puff slots per cloud (a small, narrow cloud uses far fewer than a big, broad one)
-const CLOUD_SPEED   = [3, 9];      // units/sec in +X direction (per cloud)
-const CLOUD_SIZE    = [0.45, 1.5]; // size multiplier, drawn log-uniformly: many small clouds, a few big ones
-const CLOUD_STRETCH = [0.9, 2.1];  // how elongated along X (the drift direction) a cloud is
-const CLOUD_DEPTH   = [0.9, 2.3];  // how far its puffs spread across Z: low = a narrow streak, high = a broad bank
+const CLOUD_COUNT   = 3;
+const SLOTS         = 36;          // puff slots per cloud (a smaller cloud uses fewer)
+const CLOUD_SPEED   = [3, 7];      // units/sec in +X direction (per cloud)
+const CLOUD_SIZE    = [1.5, 2.6];  // size multiplier: all of them big, a few big clouds rather than many small ones
+const CLOUD_LENGTH  = [1.2, 1.6];  // half-length of a cloud's long axis relative to its size …
+const CLOUD_ASPECT  = [0.4, 0.62]; // … and its short axis as a fraction of that: oblong (long ≈ 1.6–2.5× the short), neither round nor a streak
 const CLOUD_HEIGHT  = [105, 175];
-const CLOUD_LIFE    = [70, 170];   // seconds from appearing to gone
-const CLOUD_FADE    = [10, 22];    // seconds to fade in, and the same to fade out
-const CLOUD_WAIT    = [0, 35];     // seconds a dead cloud waits before reappearing
-const EDGE_FADE     = 170;         // clouds also fade out over this distance towards the edge of the drift range
-const EDGE_MARGIN   = 200;         // the drift range reaches this far beyond the park edge (fully faded there)
-const CLOUD_OPACITY = 0.6;
+const CLOUD_WAIT    = [5, 70];     // seconds a cloud that has left waits before entering again
+const FADE_REACH    = 60;          // the fades happen within this distance inside the map's left and right edges; beyond them, the cloud's own half-width (a big cloud starts and ends further out)
+const CLOUD_OPACITY = 0.38; // per puff: a big cloud stacks a few dozen of them, so it must stay low to keep the map readable through it
 
 const _clouds = [];
 let _mesh = null;
-let _fadeAttr = null;
-let _seedAttr = null;
-let _edge = 0;
-let _parkHalf = 0;
+let _puffAttr = null; // per puff: x = seed, y = fade
+let _half = 0;
 let _rand = Math.random;
 
 const _uniforms = {
@@ -102,55 +98,59 @@ const FRAG = /* glsl */`
 
 const lerpRange = ([a, b], t) => a + (b - a) * t;
 const logUniform = ([a, b]) => a * Math.pow(b / a, _rand());
+const smooth = (a, b, x) => { const t = Math.min(1, Math.max(0, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
 
 /**
- * (Re)create a cloud: a new place, size, shape, height, speed and lifespan, and a new layout of its puffs.
- * Called while the cloud is invisible, so nothing visibly changes. `initial` also scatters the age, so the
- * first clouds are not all at the same point of their life.
+ * (Re)create a cloud at the left end of the map: a new lane, size, breadth, height and speed, and a new layout of
+ * its puffs. Only done while the cloud is invisible, so nothing visibly changes. `scatter` places it somewhere
+ * along the way instead (used once at the start, so the sky is not empty).
  */
-function spawnCloud(c, initial) {
+function spawnCloud(c, scatter) {
   const size = logUniform(CLOUD_SIZE);
-  const stretch = lerpRange(CLOUD_STRETCH, _rand());
-  const depth = logUniform(CLOUD_DEPTH);
-  c.x = lerpRange([-(_parkHalf + 60), _parkHalf * 0.7], _rand()); // anywhere, most with room to drift
+  const major = 30 * size * lerpRange(CLOUD_LENGTH, _rand());  // half-length of the long axis …
+  const minor = major * lerpRange(CLOUD_ASPECT, _rand());       // … and of the short one
+  const turn = _rand() * Math.PI;                                // which way the long axis points (any direction)
+  const cosT = Math.cos(turn), sinT = Math.sin(turn);
+  // A big cloud is wide: it enters from, and leaves to, a point as far outside the map as its own half-width plus
+  // the fade reach, so it is invisible while it is still wholly beyond the edge and gone once wholly past the other.
+  c.reach = FADE_REACH + major;
+  c.x = scatter ? lerpRange([-_half - c.reach, _half + c.reach], _rand()) : -_half - c.reach;
   c.y = lerpRange(CLOUD_HEIGHT, _rand());
-  c.z = (_rand() * 2 - 1) * _parkHalf * 1.05;
+  c.z = (_rand() * 2 - 1) * _half * 0.9;
   c.speed = lerpRange(CLOUD_SPEED, _rand());
-  c.life = lerpRange(CLOUD_LIFE, _rand());
-  c.fadeT = Math.min(lerpRange(CLOUD_FADE, _rand()), c.life / 3);
-  c.age = initial ? _rand() * c.life : 0;
   c.wait = 0;
   c.fade = 0;
 
-  // Small clouds are a few puffs, big ones a dozen.
+  // A filled ellipse of puffs (golden-angle spiral, jittered), bigger puffs in the middle; more puffs for a bigger cloud.
   const sizeT = (size - CLOUD_SIZE[0]) / (CLOUD_SIZE[1] - CLOUD_SIZE[0]);
-  // More puffs for a bigger, longer or broader cloud, so the extra area stays filled in.
-  const n = Math.min(SLOTS, Math.max(3, Math.round(3 + sizeT * 7 + (stretch - 0.9) * 2.5 + (depth - 0.9) * 3.5 + _rand() * 2)));
+  const n = Math.min(SLOTS, Math.round(22 + sizeT * 10 + _rand() * 3));
+  const puffScale = Math.min(1.35, Math.max(1.0, minor / (20 * size))); // puffs wide enough to fill the short axis, so no gaps
   for (let k = 0; k < SLOTS; k++) {
     const p = c.puffs[k];
     if (k >= n) { p.size = 0; continue; }
-    const t = n === 1 ? 0 : (k / (n - 1)) * 2 - 1;        // −1 … 1 along the cloud
-    const body = 1 - Math.abs(t) * 0.55;                  // bigger puffs towards the middle
-    p.ox = (t * 34 + (_rand() - 0.5) * 12) * size * stretch;
+    const r = Math.sqrt((k + 0.5) / n), a = k * 2.39996 + _rand() * 0.5;
+    const body = 1 - r * 0.45;
+    // A point of the ellipse (long axis `major`, short axis `minor`), then turned by `turn`.
+    const ex = Math.cos(a) * r * major + (_rand() - 0.5) * 6 * size;
+    const ez = Math.sin(a) * r * minor + (_rand() - 0.5) * 6 * size;
+    p.ox = ex * cosT - ez * sinT;
+    p.oz = ex * sinT + ez * cosT;
     p.oy = (_rand() - 0.3) * 6 * body * size;
-    p.oz = (_rand() - 0.5) * 22 * body * size * depth;
-    // Broad clouds get slightly larger puffs, so the wider spread stays filled in.
-    p.size = (24 + _rand() * 18) * body * size * (0.95 + 0.25 * Math.min(depth, 2.2));
+    p.size = (22 + _rand() * 16) * body * size * puffScale;
     p.seed = _rand();
-    _seedAttr.array[(c.index * SLOTS + k) * 2] = p.seed;
+    _puffAttr.array[(c.index * SLOTS + k) * 2] = p.seed;
   }
-  _seedAttr.needsUpdate = true;
+  _puffAttr.needsUpdate = true;
 }
 
 export function buildClouds(scene, rand) {
   _rand = rand;
-  _parkHalf = getParkHalf();
-  _edge = _parkHalf + EDGE_MARGIN;
+  _half = getParkHalf();
 
   const geo = new THREE.PlaneGeometry(1, 1);
-  _seedAttr = _fadeAttr = new THREE.InstancedBufferAttribute(new Float32Array(CLOUD_COUNT * SLOTS * 2), 2); // x: seed, y: fade
-  _fadeAttr.setUsage(THREE.DynamicDrawUsage);
-  geo.setAttribute('aPuff', _fadeAttr);
+  _puffAttr = new THREE.InstancedBufferAttribute(new Float32Array(CLOUD_COUNT * SLOTS * 2), 2);
+  _puffAttr.setUsage(THREE.DynamicDrawUsage);
+  geo.setAttribute('aPuff', _puffAttr);
 
   for (let i = 0; i < CLOUD_COUNT; i++) {
     const c = { index: i, puffs: Array.from({ length: SLOTS }, () => ({ ox: 0, oy: 0, oz: 0, size: 0, seed: 0 })) };
@@ -178,26 +178,22 @@ const _m = new THREE.Matrix4();
 const _p = new THREE.Vector3();
 const _q = new THREE.Quaternion();
 const _s = new THREE.Vector3();
-const smooth = (a, b, x) => { const t = Math.min(1, Math.max(0, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
 
 export function updateClouds(dt) {
   if (!_mesh) return;
   _uniforms.uTime.value += dt;
-  const fadeData = _fadeAttr.array;
+  const data = _puffAttr.array;
 
   for (const c of _clouds) {
     if (c.wait > 0) {
-      // Dead: wait a random while, then come back as a different cloud.
+      // Left the map: wait a random while, then enter again from the left as a different cloud.
       c.wait -= dt;
       if (c.wait <= 0) spawnCloud(c, false);
     } else {
-      c.age += dt;
       c.x += c.speed * dt;
-      const life = smooth(0, c.fadeT, c.age) * (1 - smooth(c.life - c.fadeT, c.life, c.age));
-      const edge = smooth(-_edge, -_edge + EDGE_FADE, c.x) * (1 - smooth(_edge - EDGE_FADE, _edge, c.x));
-      c.fade = life * edge;
-      // Gone: its time is up, or it has drifted out of the sky (fully faded either way).
-      if (c.age >= c.life || c.x > _edge) { c.fade = 0; c.wait = lerpRange(CLOUD_WAIT, _rand()) + 0.001; }
+      // In across the left edge, out across the right edge; fully visible in between.
+      c.fade = smooth(-_half - c.reach, -_half + FADE_REACH, c.x) * (1 - smooth(_half - FADE_REACH, _half + c.reach, c.x));
+      if (c.x >= _half + c.reach) { c.fade = 0; c.wait = lerpRange(CLOUD_WAIT, _rand()); }
     }
 
     for (let k = 0; k < SLOTS; k++) {
@@ -207,11 +203,16 @@ export function updateClouds(dt) {
       _p.set(c.x + p.ox, c.y + p.oy, c.z + p.oz);
       _s.set(size, size, size);
       _mesh.setMatrixAt(i, _m.compose(_p, _q, _s));
-      fadeData[i * 2 + 1] = visible ? c.fade : 0;
+      data[i * 2 + 1] = visible ? c.fade : 0;
     }
   }
   _mesh.instanceMatrix.needsUpdate = true;
-  _fadeAttr.needsUpdate = true;
+  _puffAttr.needsUpdate = true;
+}
+
+/** Debug aid (console / tests): where each cloud is and how visible it is. */
+export function cloudState() {
+  return _clouds.map(c => ({ x: +c.x.toFixed(0), z: +c.z.toFixed(0), y: +c.y.toFixed(0), fade: +c.fade.toFixed(2), waiting: c.wait > 0 }));
 }
 
 /** Light the clouds (called by DayCycle): `lit` for the sunny tops, `shade` for the undersides. */
