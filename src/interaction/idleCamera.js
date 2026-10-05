@@ -1,9 +1,12 @@
 /**
- * Idle camera — a screensaver tour. When nobody has touched anything for a while (or the Tour button / `I` key is pressed)
- * the camera either turns slowly round the diorama or jumps to a random person and follows them for a while, then goes on
- * to the next, mixing the two. The Follow button opens a list instead: a random person after another, or one person in
- * particular, who is then followed for good. Any input (mouse, wheel, touch, keys) ends it and flies the camera back to
- * the view the page opened with.
+ * Idle camera — the camera that looks after itself. Four modes:
+ *   - 'idle'   (starts by itself after a while without input): follows one person after another, each for a while, with
+ *              a chance at every change of turning slowly round the diorama instead; once turning it goes on until it has
+ *              made a full turn, and then has a chance to go back to following people (otherwise another turn).
+ *   - 'rotate' (the Rotate button / `I`): turns round the diorama until stopped.
+ *   - 'follow' (the Follow list's "Someone random" / `F`): one person after another, never turning round the park.
+ *   - 'person' (a name in the Follow list): stays with that person until stopped.
+ * Any input (mouse, wheel, touch, keys) ends it and flies the camera back to the view the page opened with.
  *
  * It only drives existing pieces: OrbitControls' auto-rotate for the turn, and CameraController.follow / goHome.
  */
@@ -23,15 +26,17 @@ const rangeRand = ([a, b]) => a + Math.random() * (b - a);
  * @param {{ target: THREE.Vector3, dist: number, dir: THREE.Vector3 }} o.orbitView  the view to turn round the diorama from: centred on the middle of the park
  */
 export function createIdleCamera({ camController, controls, getAgents, followFrame, followHeight, orbitView }) {
-  let on = false;          // a tour is running
-  let phase = null;        // 'orbit' | 'follow'
-  let timer = 0;           // seconds left in this phase
+  let on = false;          // something is running
+  let mode = null;         // 'idle' | 'rotate' | 'follow' | 'person' (see above)
+  let phase = null;        // what it is doing now: 'orbit' | 'follow'
+  let timer = 0;           // seconds left with this person
   let lastAgent = null;
+  let fixed = null;        // the person of mode 'person'
   let idleFor = 0;         // seconds since the last input
-  let followOnly = false;  // the Follow button: always someone, never the turn round the park
-  let fixed = null;        // a person chosen from the Follow list: the camera stays with them until stopped
+  let turned = 0;          // radians turned since this spell of turning began
+  let prevAz = null;
 
-  // ── The buttons: "Follow" (follow one random person after another) and "Tour" (turn round the park, then people) ──
+  // ── The buttons: "Follow" (a list: someone random, or a particular person) and "Rotate" (turn round the park) ──
   const bar = document.createElement('div');
   bar.dataset.tour = '1';
   bar.style.cssText = 'position: fixed; right: 16px; bottom: 14px; z-index: 30; display: flex; gap: 8px;';
@@ -46,14 +51,15 @@ export function createIdleCamera({ camController, controls, getAgents, followFra
     bar.appendChild(b);
     return b;
   };
-  const followButton = makeButton(() => { if (on && followOnly) stop(true); else toggleMenu(); });
-  const tourButton = makeButton(() => { closeMenu(); toggle(false); });
+  const following = () => mode === 'follow' || mode === 'person';
+  const followButton = makeButton(() => { if (on && following()) stop(true); else toggleMenu(); });
+  const rotateButton = makeButton(() => { closeMenu(); toggle('rotate'); });
   document.body.appendChild(bar);
   const paint = () => {
-    followButton.textContent = on && followOnly ? '■ Stop following' : '▶ Follow ▴';
+    followButton.textContent = on && following() ? '■ Stop following' : '▶ Follow ▴';
     followButton.title = 'Follow somebody: pick a person, or a random one after another (F)';
-    tourButton.textContent = on && !followOnly ? '■ Stop tour' : '▶ Tour';
-    tourButton.title = 'Camera tour (I)';
+    rotateButton.textContent = on && mode === 'rotate' ? '■ Stop rotating' : '▶ Rotate';
+    rotateButton.title = 'Turn slowly round the diorama (I)';
   };
   paint();
 
@@ -79,9 +85,9 @@ export function createIdleCamera({ camController, controls, getAgents, followFra
   };
   function openMenu() {
     menu.replaceChildren();
-    addItem('🎲  Someone random', () => start(true, null), it => { it.style.borderBottom = '1px solid var(--ui-border, #c8a850)'; it.style.borderRadius = '6px 6px 0 0'; });
+    addItem('🎲  Someone random', () => start('follow'), it => { it.style.borderBottom = '1px solid var(--ui-border, #c8a850)'; it.style.borderRadius = '6px 6px 0 0'; });
     const people = [...getAgents()].sort((a, b) => (a.person?.name ?? '').localeCompare(b.person?.name ?? ''));
-    for (const agent of people) addItem(agent.person?.name ?? '?', () => start(true, agent), it => applyNameColor(it, agent));
+    for (const agent of people) addItem(agent.person?.name ?? '?', () => start('person', agent), it => applyNameColor(it, agent));
     menu.style.display = 'block';
   }
   function closeMenu() { menu.style.display = 'none'; }
@@ -90,53 +96,47 @@ export function createIdleCamera({ camController, controls, getAgents, followFra
   // ── Starting and stopping ──────────────────────────────────────────────────
   function startOrbit() {
     phase = 'orbit';
-    timer = rangeRand(IDLE_CAMERA.orbitTime);
+    timer = Infinity;
+    turned = 0; prevAz = null;
     controls.autoRotate = false;           // switched on once the camera is back on the overview (update)
     if (camController.mode !== 'free' || !_nearOrbitView()) camController.flyToView(orbitView);
   }
 
   function startFollow() {
-    if (fixed) {                           // a chosen person: stay with them for good
-      lastAgent = fixed;
-      phase = 'follow';
-      timer = Infinity;
-      controls.autoRotate = false;
-      camController.follow(fixed.mesh, followFrame(), followHeight);
-      return;
+    let agent = fixed;
+    if (!agent) {
+      let agents = getAgents().filter(a => a !== lastAgent);
+      if (!agents.length) agents = getAgents();   // (only one person: stay with them)
+      if (!agents.length) return startOrbit();
+      agent = agents[Math.floor(Math.random() * agents.length)];
     }
-    let agents = getAgents().filter(a => a !== lastAgent);
-    if (!agents.length && followOnly) agents = getAgents();   // (only one person: stay with them)
-    if (!agents.length) return startOrbit();
-    const agent = agents[Math.floor(Math.random() * agents.length)];
     lastAgent = agent;
     phase = 'follow';
-    timer = rangeRand(IDLE_CAMERA.followTime);
+    timer = mode === 'person' ? Infinity : rangeRand(IDLE_CAMERA.followTime);
     controls.autoRotate = false;
     camController.follow(agent.mesh, followFrame(), followHeight);
   }
 
-  function next() {
-    // After a spell of orbiting always visit someone; after following someone, usually someone else.
-    if (followOnly || phase === 'orbit' || Math.random() < IDLE_CAMERA.followShare) startFollow(); else startOrbit();
-  }
-
   /**
-   * @param {boolean} [onlyFollow]  just follow people (no turn round the park)
-   * @param {object|null} [person]  with onlyFollow: this person for good (otherwise a random one, then another)
+   * @param {'idle'|'rotate'|'follow'|'person'} [kind]
+   * @param {object|null} [person]  for 'person'
    */
-  function start(onlyFollow = false, person = null) {
-    if (on) stop(false);                   // (from a tour straight to following someone)
+  function start(kind = 'idle', person = null) {
+    if (on) stop(false);                   // (straight from one mode to another)
     on = true;
-    followOnly = onlyFollow;
-    fixed = onlyFollow ? person : null;
+    mode = kind;
+    fixed = kind === 'person' ? person : null;
     paint();
-    if (followOnly) startFollow(); else startOrbit();
+    if (kind === 'rotate') startOrbit();
+    else if (kind === 'idle') { if (Math.random() < 0.5) startOrbit(); else startFollow(); }
+    else startFollow();
   }
 
   /** @param {boolean} reset  fly back to the opening view */
   function stop(reset = true) {
     if (!on) return;
     on = false;
+    mode = null;
     phase = null;
     fixed = null;
     controls.autoRotate = false;
@@ -145,7 +145,7 @@ export function createIdleCamera({ camController, controls, getAgents, followFra
     idleFor = 0;
   }
 
-  function toggle(onlyFollow = false) { closeMenu(); if (on) stop(true); else start(onlyFollow); }
+  function toggle(kind = 'idle') { closeMenu(); if (on) stop(true); else start(kind); }
 
   // ── Input ends the tour (and restarts the idle clock) ──────────────────────
   const touched = () => { idleFor = 0; closeMenu(); if (on) stop(true); };
@@ -155,8 +155,8 @@ export function createIdleCamera({ camController, controls, getAgents, followFra
   window.addEventListener('touchstart', e => { if (!fromButton(e)) touched(); }, { passive: true, capture: true });
   window.addEventListener('pointermove', e => { if (e.buttons && !fromButton(e)) touched(); }, true);   // (just moving the mouse is not input)
   window.addEventListener('keydown', e => {
-    if (e.key === 'i' || e.key === 'I') { e.preventDefault(); toggle(false); idleFor = 0; return; }
-    if (e.key === 'f' || e.key === 'F') { e.preventDefault(); toggle(true); idleFor = 0; return; }
+    if (e.key === 'i' || e.key === 'I') { e.preventDefault(); toggle('rotate'); idleFor = 0; return; }
+    if (e.key === 'f' || e.key === 'F') { e.preventDefault(); toggle('follow'); idleFor = 0; return; }
     touched();
   }, true);
 
@@ -172,20 +172,34 @@ export function createIdleCamera({ camController, controls, getAgents, followFra
   function update(dt) {
     if (!on) {
       idleFor += dt;
-      if (idleFor >= IDLE_CAMERA.delay && camController.mode === 'free' && !document.hidden) start();
+      if (idleFor >= IDLE_CAMERA.delay && camController.mode === 'free' && !document.hidden) start('idle');
       return;
     }
-    timer -= dt;
     if (phase === 'orbit') {
-      // Once the flight back to the overview is over, turn.
-      if (camController.mode === 'free' && !controls.autoRotate) {
-        controls.autoRotate = true;
-        controls.autoRotateSpeed = IDLE_CAMERA.orbitSpeed;
+      // Once the flight back to the overview is over, turn; count how far round it has gone.
+      if (camController.mode === 'free') {
+        if (!controls.autoRotate) {
+          controls.autoRotate = true;
+          controls.autoRotateSpeed = IDLE_CAMERA.orbitSpeed;
+          turned = 0; prevAz = null;
+        }
+        const cam = camController._cam;
+        const az = Math.atan2(cam.position.x - controls.target.x, cam.position.z - controls.target.z);
+        if (prevAz !== null) turned += Math.abs(Math.atan2(Math.sin(az - prevAz), Math.cos(az - prevAz)));
+        prevAz = az;
+        // A full turn first; only then (and only when left to itself) a chance to go back to people, else another turn.
+        if (mode === 'idle' && turned >= Math.PI * 2) {
+          if (Math.random() < IDLE_CAMERA.followAfterTurn) startFollow(); else { turned = 0; prevAz = null; }
+        }
       }
-    } else if (phase === 'follow' && camController.mode !== 'follow') {
-      startFollow();                       // something took the camera off the person: pick up again
+    } else if (phase === 'follow') {
+      if (camController.mode !== 'follow') { startFollow(); return; }   // something took the camera off the person: pick up again
+      timer -= dt;
+      if (timer <= 0) {
+        // Idle: now and then turn round the park instead of going to the next person. Otherwise the next person.
+        if (mode === 'idle' && Math.random() < IDLE_CAMERA.rotateChance) startOrbit(); else startFollow();
+      }
     }
-    if (timer <= 0) next();
   }
 
   return { update, toggle, start, stop, get running() { return on; } };

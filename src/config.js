@@ -89,12 +89,12 @@ export const WIND_AMP = { tree: 0.045, bush: 0.05, flower: 0.09, flowerpatch: 0.
 // Idle camera tour (interaction/idleCamera.js): after `delay` seconds without input (or the Tour button / I key) the camera
 // turns round the diorama or follows a random person for a while, then the next; any input flies it back to the opening view.
 export const IDLE_CAMERA = {
-  delay: 45,            // seconds without input before the tour starts by itself
-  orbitTime: [22, 32],  // seconds of turning round the diorama
+  delay: 45,            // seconds without input before the camera starts by itself ('idle' mode)
   followTime: [18, 28], // seconds with one person
-  followShare: 0.7,     // after following someone: chance of going on to someone else (otherwise a turn round the park)
+  rotateChance: 0.3,    // idle mode, at each change of person: chance of turning round the park instead
+  followAfterTurn: 0.7, // idle mode, after each full turn round the park: chance of going back to people (else another turn)
   orbitSpeed: 1.0,      // OrbitControls autoRotateSpeed (2 = one turn in 30 s)
-  orbitZoom: 1.65,       // the turn round the park is this much further back than the plain overview, to see more of it at once
+  orbitZoom: 1.65,      // the turn round the park is this much further back than the plain overview, to see more of it at once
 };
 // The gate: an entrance path from the corner the camera starts over to the nearest part of the network, with an arch halfway.
 export const GATE_INSET       = 14;   // the path starts this far in from the corner's two edges
