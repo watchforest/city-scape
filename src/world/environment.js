@@ -14,7 +14,7 @@ import * as THREE from 'three';
 import { REED_COLOR } from '@/config.js';
 import { shorePoint, getLakeFootprint } from './lake.js';
 import { getParkBounds, getParkHalf, getParkAreaScale } from './parkBounds.js';
-import { registerCircle, registerEllipse, registerSolid, registerSolidSegment, isOccupied } from './obstacleRegistry.js';
+import { registerCircle, registerEllipse, registerSolid, registerSolidSegment, registerOccluder, isOccupied } from './obstacleRegistry.js';
 import { registerBench } from './benchRegistry.js';
 import { isOnPath } from '@/paths/pathTexture.js';
 import { addContactShade } from './groundShade.js';
@@ -318,6 +318,8 @@ function addDecorTree(batches, { variant: v, age }, x, z, rand) {
   addContactShade(x, z, crownR * 1.5, 0.5);
   registerCircle(x, z, 1.2 * s); // trunk: keeps bushes, rocks and grass out of it
   registerSolid(x, z, 0.45 * s);  // … and people walk round it
+  const treeH = v.size[1] * s * squash, base = getTerrainHeight(x, z);
+  registerOccluder(x, z, crownR * 0.75, base + treeH * 0.35, base + treeH);  // the crown can hide a person from the camera
   const spot = { x, z, r: crownR };
   batches.get(v.id).add(
     _compose(x, getTerrainHeight(x, z) - 0.15 * s, z, rand() * Math.PI * 2, s / Math.sqrt(squash), s * squash, s / Math.sqrt(squash)),

@@ -15,6 +15,7 @@ export const registry = [];
 export function clear() {
   registry.length = 0;
   _solidGrid.clear();
+  _occGrid.clear();
 }
 
 // ── Solids: what people cannot walk through ───────────────────────────────────
@@ -68,6 +69,47 @@ export function registerCircle(x, z, r) {
 
 export function registerEllipse(x, z, rx, rz) {
   registry.push({ type: 'ellipse', x, z, rx, rz });
+}
+
+// ── Occluders: what can hide something from the camera ────────────────────────
+// Upright cylinders (a tree's crown, a landmark) in a coarse hash grid, for cheap "is this line of sight blocked?"
+// questions (the camera following a person, interaction/cameraController.js).
+
+const OCC_CELL = 10;
+const _occGrid = new Map(); // "cx,cz" → [{ x, z, r, y0, y1 }]
+
+/** A cylinder of radius r round (x, z), from height y0 to y1. */
+export function registerOccluder(x, z, r, y0, y1) {
+  const o = { x, z, r, y0, y1 };
+  const cx0 = Math.floor((x - r) / OCC_CELL), cx1 = Math.floor((x + r) / OCC_CELL);
+  const cz0 = Math.floor((z - r) / OCC_CELL), cz1 = Math.floor((z + r) / OCC_CELL);
+  for (let cx = cx0; cx <= cx1; cx++) {
+    for (let cz = cz0; cz <= cz1; cz++) {
+      const k = _cellKey(cx, cz);
+      if (!_occGrid.has(k)) _occGrid.set(k, []);
+      _occGrid.get(k).push(o);
+    }
+  }
+}
+
+/**
+ * True if the straight line from (ax, ay, az) to (bx, by, bz) passes through an occluder, ignoring the last `skipEnd`
+ * units before b (whatever stands right next to the thing being looked at does not count).
+ */
+export function isLineOccluded(ax, ay, az, bx, by, bz, skipEnd = 4, step = 1.5) {
+  const dx = bx - ax, dy = by - ay, dz = bz - az, len = Math.hypot(dx, dy, dz);
+  const n = Math.floor((len - skipEnd) / step);
+  for (let i = 0; i <= n; i++) {
+    const t = (i * step) / len, px = ax + dx * t, py = ay + dy * t, pz = az + dz * t;
+    const list = _occGrid.get(_cellKey(Math.floor(px / OCC_CELL), Math.floor(pz / OCC_CELL)));
+    if (!list) continue;
+    for (const o of list) {
+      if (py < o.y0 || py > o.y1) continue;
+      const ox = px - o.x, oz = pz - o.z;
+      if (ox * ox + oz * oz < o.r * o.r) return true;
+    }
+  }
+  return false;
 }
 
 // ── Path occupancy grid ───────────────────────────────────────────────────────

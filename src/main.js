@@ -12,7 +12,7 @@ import { fitParkToNodes, getParkBounds, getParkHalf } from './world/parkBounds.j
 import { bakePathTexture } from './paths/pathTexture.js';
 import { computeFootprints } from './attractions/landmarkFit.js';
 import { buildAttractionMeshes, animateAttractions } from './attractions/AttractionPlacer.js';
-import { registerCircle, rasterizePathMeshes, registry } from './world/obstacleRegistry.js';
+import { registerCircle, registerOccluder, rasterizePathMeshes, registry } from './world/obstacleRegistry.js';
 import { loadData } from './data/loader.js';
 import { buildGraph } from './data/graphBuilder.js';
 import { createScene } from './world/scene.js';
@@ -141,6 +141,10 @@ async function init() {
 
   // ── Attractions ───────────────────────────────────────────────────────────
   const attractionMeshes = buildAttractionMeshes(scene, attractions, assetLibrary);
+  for (const { group } of attractionMeshes) {   // landmarks can hide a person from the camera that follows them
+    const box = new THREE.Box3().setFromObject(group), w = box.max.x - box.min.x, d = box.max.z - box.min.z;
+    registerOccluder((box.min.x + box.max.x) / 2, (box.min.z + box.max.z) / 2, Math.min(w, d) / 2 * 0.9, box.min.y + 1, box.max.y);
+  }
 
   // ── Agents ────────────────────────────────────────────────────────────────
   let activeAgent = null;

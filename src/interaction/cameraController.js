@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { getTerrainHeight } from '@/world/terrain.js';
 import { getParkHalf } from '@/world/parkBounds.js';
+import { isLineOccluded } from '@/world/obstacleRegistry.js';
 
 /**
  * Camera controller that physically moves the camera (dolly), rather than
@@ -30,6 +31,8 @@ const MIN_CLEARANCE = 3;     // the camera stays this far above the terrain
 const EDGE_SLACK = 12;       // the target may go this far past the edge of the map
 const INSET_RATE = 6;        // how fast the side-panel offset eases in/out (1/s)
 const GRAB_MAX_STEP = 0.35;  // a drag may move the view by at most this × the camera's distance to the grabbed point (when the drag began) per pointer event
+const OCCLUSION_CHECK = 0.25; // seconds between checks of whether the followed person is hidden
+const OCCLUSION_TURN = 2.2;   // how fast (1/s) the camera swings round to a clear view
 const GRAB_MIN_SLOPE = 0.2;  // a ray must point at least this steeply below the horizon (a slope of 0.2 ≈ 11°) to count as ground; nearer the horizon the ground stretches out without limit
 
 export class CameraController {
@@ -173,6 +176,8 @@ export class CameraController {
     this._followDist = typeof frame === 'number' ? this._chooseDistance(frame) : frame.comfort;
     this._zoomOutHere = false;
     this._insetTarget = 0;
+    this._yawGoal = null;       // set when the person gets hidden (see _avoidOcclusion)
+    this._occT = 0;
     this._mode = 'follow';
   }
 
@@ -398,6 +403,38 @@ export class CameraController {
     }
   }
 
+  /**
+   * Following someone: if a tree or a landmark comes between the camera and them, swing the camera round them to the
+   * nearest side from which they can be seen (checked a few times a second; the swing is smooth, and the camera stays
+   * where it ends up while the view is clear).
+   */
+  _avoidOcclusion(dt) {
+    const dir = this._dir, el = dir.y;                         // unit target→camera; keep its elevation
+    const cur = Math.atan2(dir.x, dir.z);
+    this._occT += dt;
+    if (this._occT >= OCCLUSION_CHECK) {
+      this._occT = 0;
+      const t = this._curTarget, d = this._curDist, horiz = Math.sqrt(Math.max(0, 1 - el * el));
+      const hidden = yaw => isLineOccluded(
+        t.x + Math.sin(yaw) * horiz * d, t.y + el * d, t.z + Math.cos(yaw) * horiz * d, t.x, t.y, t.z);
+      if (hidden(cur)) {
+        this._yawGoal = null;
+        for (let k = 1; k <= 9; k++) {                         // 20°, −20°, 40°, −40° … 180°: the nearest clear side
+          const off = (k * Math.PI) / 9;
+          if (!hidden(cur + off)) { this._yawGoal = cur + off; break; }
+          if (!hidden(cur - off)) { this._yawGoal = cur - off; break; }
+        }
+      }
+    }
+    if (this._yawGoal != null) {
+      const diff = Math.atan2(Math.sin(this._yawGoal - cur), Math.cos(this._yawGoal - cur));
+      if (Math.abs(diff) < 0.01) { this._yawGoal = null; return; }
+      const next = cur + diff * Math.min(1, dt * OCCLUSION_TURN);
+      const horiz = Math.sqrt(Math.max(0, 1 - el * el));
+      dir.set(Math.sin(next) * horiz, el, Math.cos(next) * horiz);
+    }
+  }
+
   update(dt) {
     this._updateInset(dt);
 
@@ -418,6 +455,7 @@ export class CameraController {
       this._curTarget.y += (tp.y + this._followHeight - this._curTarget.y) * k;
       this._curTarget.z += (tp.z - this._curTarget.z) * k;
       this._curDist += (this._followDist - this._curDist) * Math.min(1, dt * 3);
+      this._avoidOcclusion(dt);
       this._apply();
       this._constrain();
       return;
