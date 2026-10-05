@@ -27,3 +27,6 @@ dist/
 *.swo
 # Synthetic test datasets (scripts/genTestData.mjs, open the app with ?data=<name>)
 public/assets/data/_test/
+
+# Local only: working notes and screenshots
+/TODO.md
