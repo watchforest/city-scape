@@ -94,13 +94,22 @@ async function init() {
   const footprints = computeFootprints(projectNodes, assetLibrary);
   fitParkToNodes(projectNodes, footprints);
 
-  // Find lake position before baking the terrain mask so the lake bed is flat
-  const routeSegments = affinityEdges.map(({ i, j }) =>
-    [projectNodes[i].layoutU, projectNodes[i].layoutV, projectNodes[j].layoutU, projectNodes[j].layoutV]);
-  const lakePos = findLakePosition(projectNodes, routeSegments);
-  setLake(lakePos);
+  // Find the lake once the routes are known (so it keeps clear of the real paths and plazas), before
+  // the terrain mask is baked so the lake bed is flat
+  const pickLake = routes => {
+    const byId = new Map(projectNodes.map(p => [p.id, p]));
+    const routeSegments = [];
+    for (const e of routes.edges) {
+      const pts = [byId.get(e.fromId), ...e.controlPts.map(c => ({ layoutU: c.u, layoutV: c.v })), byId.get(e.toId)];
+      for (let k = 1; k < pts.length; k++) routeSegments.push([pts[k - 1].layoutU, pts[k - 1].layoutV, pts[k].layoutU, pts[k].layoutV]);
+    }
+    const clearRadius = new Map(projectNodes.map(p => [p.id, Math.max(routes.plazaRadius.get(p.id) ?? 0, routes.exclusionRadius.get(p.id) ?? 0)]));
+    const pos = findLakePosition(projectNodes, routeSegments, clearRadius);
+    setLake(pos);
+    return pos;
+  };
 
-  const { pathMeshes, pathShapes, pathSegments, renderedSegments, navGraph, attractions, plazaRadius, gate } = buildNavMesh(projectNodes, rand, affinityEdges, lakePos, footprints, site.gate !== false);
+  const { pathMeshes, pathShapes, pathSegments, renderedSegments, navGraph, attractions, plazaRadius, lakePos, gate } = buildNavMesh(projectNodes, rand, affinityEdges, pickLake, footprints, site.gate !== false);
 
   // Rasterize all path meshes into occupancy grid — exact visual surface
   // (includes plaza discs, ribbon paths, junction discs)
@@ -159,7 +168,7 @@ async function init() {
       frameLandmark(attraction, { zoomOutHere: true });
     }
   );
-  if (import.meta.env.DEV) Object.assign(window.__dbg ??= {}, { cam, controls, camController, agentController, scene, attractionMeshes, pathSegments, navGraph, pitch, gate, idleCamera: () => idleCamera, IDLE_CAMERA, flowerSpots, lamps, benchSpots, pathSamples, plazas, dayCycle, clouds: { update: updateClouds, state: cloudState } }); // dev only: poke at the scene from the console
+  if (import.meta.env.DEV) Object.assign(window.__dbg ??= {}, { cam, controls, camController, agentController, scene, attractionMeshes, pathSegments, navGraph, pitch, gate, lakePos, idleCamera: () => idleCamera, IDLE_CAMERA, flowerSpots, lamps, benchSpots, pathSamples, plazas, dayCycle, clouds: { update: updateClouds, state: cloudState } }); // dev only: poke at the scene from the console
   agentController.setRand(rand);
   agentController.setCamera(cam);
   agentController.setDismissCallback(() => { camController.zoomOut(); activeAgent = null; });

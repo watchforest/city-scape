@@ -25,8 +25,10 @@ import { placeAttractions } from '../attractions/AttractionPlacer.js';
 import { planGatePath, addGatePath } from '../paths/gatePath.js';
 import { bakePathMask, getTerrainHeight } from './terrain.js';
 
-export function buildNavMesh(projectNodes, rand, affinityEdges = null, lakePos = null, footprints = new Map(), withGate = true) {
+export function buildNavMesh(projectNodes, rand, affinityEdges = null, lakeFor = null, footprints = new Map(), withGate = true) {
   const routes = buildRoutes(projectNodes, rand, affinityEdges, footprints);
+  // `lakeFor` is the lake, or a function that picks it from the finished routes (so it can keep clear of the real paths).
+  const lakePos = typeof lakeFor === 'function' ? lakeFor(routes) : lakeFor;
 
   // Bake the terrain flat-zone mask: ground stays level around landmarks, plazas and the
   // lake. Paths themselves do NOT flatten the ground — they are draped over the terrain
@@ -72,6 +74,7 @@ export function buildNavMesh(projectNodes, rand, affinityEdges = null, lakePos =
     navGraph,
     attractions,
     plazaRadius:      routes.plazaRadius,
-    gate,                                // { entry, connect, dir, side, pts } or null (see paths/gatePath.js)
+    lakePos,
+    gate,                               // { entry, connect, dir, side, pts } or null (see paths/gatePath.js)
   };
 }

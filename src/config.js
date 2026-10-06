@@ -118,7 +118,7 @@ export const CLOUD_COLOR       = 0xffffff;  // cloud blobs
 // Uniform scale applied to every character model (no auto-fit)
 export const AGENT_SCALE        = 1.5;
 export const AGENT_SPEED        = 4.5; // world units per second (walking pace — see AGENT_WALK_TIMESCALE)
-export const AGENT_SPRINT_SPEED = 11;  // world units per second (running to a project)
+export const AGENT_SPRINT_SPEED = 20;  // world units per second (running to a project)
 export const AGENT_TURN_RATE    = 10;  // how quickly an agent turns to face its travel direction (1/s; higher = snappier)
 
 // Walking on slopes (the hills reach ~20° where agents walk): going uphill slows an agent,

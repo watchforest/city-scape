@@ -499,17 +499,19 @@ const LAKE_RZ = 26;
  * the park edge. Constraints are relaxed tier by tier on small or crowded parks.
  *
  * @param {ProjectNode[]} projectNodes
- * @param {number[][]}    routeSegments — [ax, az, bx, bz] straight lines between connected nodes
+ * @param {number[][]}    routeSegments — [ax, az, bx, bz] lines the paths run along (the real route polylines)
+ * @param {Map<string, number>} clearRadius — per project id: plaza / landmark-clearance radius around its node
  * @returns {{ x, z, rx, rz } | null}
  */
-export function findLakePosition(projectNodes, routeSegments = []) {
+export function findLakePosition(projectNodes, routeSegments = [], clearRadius = new Map()) {
   const STEP = 10;
   // Footprint of the lake plus its banks (≈ 1.5 radii; see lake.js)
   const EXT_X = LAKE_RX * 1.5, EXT_Z = LAKE_RZ * 1.5;
-  // [min distance to a node, min distance to a route, min slack to the park edge]
-  const TIERS = [[75, 62, 25], [60, 48, 12], [50, 0, 0]];
+  // [min distance to a plaza/landmark edge, min distance to a route, min slack to the park edge]
+  const TIERS = [[50, 62, 25], [35, 48, 12], [26, 40, 0]];
 
-  const nodes = projectNodes.map(p => [p.layoutU ?? 0, p.layoutV ?? 0]);
+  const nodes = projectNodes.map(p => [p.layoutU ?? 0, p.layoutV ?? 0, clearRadius.get(p.id) ?? 0]);
+
   const half = getParkHalf();
 
   const segDist = (px, pz, [ax, az, bx, bz]) => {
@@ -526,7 +528,7 @@ export function findLakePosition(projectNodes, routeSegments = []) {
       const slack = Math.min(half - Math.abs(gx) - EXT_X, half - Math.abs(gz) - EXT_Z);
       if (slack < 0) continue;
       let nodeD = Infinity, routeD = Infinity;
-      for (const [ox, oz] of nodes) nodeD = Math.min(nodeD, Math.hypot(gx - ox, gz - oz));
+      for (const [ox, oz, r] of nodes) nodeD = Math.min(nodeD, Math.hypot(gx - ox, gz - oz) - r);
       for (const seg of routeSegments) routeD = Math.min(routeD, segDist(gx, gz, seg));
       spots.push({ gx, gz, slack, nodeD, routeD });
     }
@@ -542,7 +544,13 @@ export function findLakePosition(projectNodes, routeSegments = []) {
     }
     if (best) return { x: best.gx, z: best.gz, rx: LAKE_RX, rz: LAKE_RZ };
   }
-  return null;
+  // Crowded park: no spot clears everything, so take the one furthest from paths and plazas (never onto them if avoidable).
+  let best = null, bestClear = -Infinity;
+  for (const s of spots) {
+    const clear = Math.min(s.routeD, s.nodeD + 14);
+    if (clear > bestClear) { bestClear = clear; best = s; }
+  }
+  return best ? { x: best.gx, z: best.gz, rx: LAKE_RX, rz: LAKE_RZ } : null;
 }
 
 /**
